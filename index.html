@@ -9,7 +9,6 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Baseball ScorePad</title>
   <link rel="manifest" href="manifest.json">
-  <!-- Icônes PWA simples générées localement; elles peuvent être remplacées plus tard. -->
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -32,6 +31,7 @@
     <nav class="top-nav" aria-label="Navigation principale">
       <button class="nav-btn active" data-screen="home"><span>⌂</span> Accueil</button>
       <button class="nav-btn" data-screen="players"><span>#</span> Joueurs</button>
+      <button class="nav-btn" data-screen="calendar"><span>□</span> Calendrier</button>
       <button class="nav-btn" data-screen="new-game"><span>+</span> Partie</button>
       <button class="nav-btn" data-screen="lineup"><span>≡</span> Alignement</button>
       <button class="nav-btn" data-screen="live"><span>◆</span> Match</button>
@@ -47,7 +47,7 @@
         <div>
           <p class="eyebrow">Tableau de bord</p>
           <h2>Prêt pour la prochaine manche.</h2>
-          <p>Gérez votre équipe, préparez l’alignement et marquez chaque présence au bâton avec une interface pensée pour le terrain.</p>
+          <p>Gérez votre équipe, préparez l'alignement et marquez chaque présence au bâton avec une interface pensée pour le terrain.</p>
         </div>
         <div id="homeSummary" class="score-summary"></div>
       </div>
@@ -56,7 +56,7 @@
         <article class="home-card primary-card">
           <div>
             <h3>Nouvelle partie</h3>
-            <p>Créer une partie et passer à l’alignement.</p>
+            <p>Créer une partie et passer à l'alignement.</p>
           </div>
           <button class="primary-btn" data-screen="new-game">Créer</button>
         </article>
@@ -70,14 +70,21 @@
         <article class="home-card">
           <div>
             <h3>Joueurs</h3>
-            <p>Ajouter, consulter ou retirer les joueurs.</p>
+            <p>Ajouter, modifier ou retirer les joueurs.</p>
           </div>
           <button data-screen="players">Gérer</button>
         </article>
         <article class="home-card">
           <div>
+            <h3>Calendrier</h3>
+            <p>Préparer les matchs de l'année et créer une partie.</p>
+          </div>
+          <button data-screen="calendar">Ouvrir</button>
+        </article>
+        <article class="home-card">
+          <div>
             <h3>Statistiques</h3>
-            <p>Voir les performances individuelles.</p>
+            <p>Voir les performances de notre équipe et de l'adversaire.</p>
           </div>
           <button data-screen="stats">Voir</button>
         </article>
@@ -91,7 +98,7 @@
         <article class="home-card">
           <div>
             <h3>Paramètres</h3>
-            <p>Nom d’équipe, sauvegarde et données.</p>
+            <p>Nom d'équipe, sauvegarde et données.</p>
           </div>
           <button data-screen="settings">Régler</button>
         </article>
@@ -103,12 +110,13 @@
         <div>
           <p class="eyebrow">Effectif</p>
           <h2>Joueurs</h2>
-          <p>Ajoutez les joueurs actifs avant de créer une partie.</p>
+          <p>Ajoutez ou modifiez les joueurs actifs avant de créer une partie.</p>
         </div>
       </div>
       <div class="two-column">
         <form id="playerForm" class="card form-card">
-          <h3>Ajouter un joueur</h3>
+          <h3 id="playerFormTitle">Ajouter un joueur</h3>
+          <input id="editingPlayerId" type="hidden">
           <div class="form-row">
             <label>Numéro
               <input id="playerNumber" type="number" min="0" max="99" required>
@@ -118,12 +126,19 @@
             </label>
           </div>
           <label>Prénom
-            <input id="playerFirstName" type="text" required>
+            <input id="playerFirstName" type="text">
           </label>
           <label>Nom
-            <input id="playerLastName" type="text" required>
+            <input id="playerLastName" type="text">
           </label>
-          <button type="submit" class="primary-btn">Ajouter le joueur</button>
+          <label class="check-row">
+            <input id="playerActive" type="checkbox" checked>
+            <span>Joueur actif</span>
+          </label>
+          <div class="form-actions">
+            <button id="playerSubmitBtn" type="submit" class="primary-btn">Ajouter le joueur</button>
+            <button id="cancelPlayerEditBtn" type="button" class="secondary-btn hidden">Annuler la modification</button>
+          </div>
         </form>
         <div class="card roster-card">
           <div class="card-title-row">
@@ -135,12 +150,81 @@
       </div>
     </section>
 
+    <section id="screen-calendar" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Saison</p>
+          <h2>Calendrier</h2>
+          <p>Préparez le calendrier annuel et créez une partie directement depuis un match prévu.</p>
+        </div>
+      </div>
+      <div id="calendarSummary" class="stats-summary"></div>
+      <div class="two-column calendar-layout">
+        <form id="calendarForm" class="card form-card">
+          <h3 id="calendarFormTitle">Ajouter un match prévu</h3>
+          <input id="editingCalendarId" type="hidden">
+          <div class="form-row">
+            <label>Date
+              <input id="calendarDate" type="date" required>
+            </label>
+            <label>Heure
+              <input id="calendarTime" type="time">
+            </label>
+          </div>
+          <label>Adversaire
+            <input id="calendarOpponent" type="text" placeholder="Nom de l'adversaire" required>
+          </label>
+          <label>Terrain
+            <input id="calendarField" type="text" placeholder="Terrain">
+          </label>
+          <div class="form-row">
+            <label>Local / Visiteur
+              <select id="calendarHomeAway">
+                <option value="local">Local</option>
+                <option value="visiteur">Visiteur</option>
+              </select>
+            </label>
+            <label>Type de match
+              <select id="calendarGameType">
+                <option value="Saison">Saison</option>
+                <option value="Tournoi">Tournoi</option>
+                <option value="Amical">Amical</option>
+                <option value="Séries">Séries</option>
+                <option value="Pratique">Pratique</option>
+              </select>
+            </label>
+          </div>
+          <label>Statut
+            <select id="calendarStatus">
+              <option value="À venir">À venir</option>
+              <option value="Joué">Joué</option>
+              <option value="Annulé">Annulé</option>
+            </select>
+          </label>
+          <label>Notes
+            <textarea id="calendarNotes" rows="3" placeholder="Notes utiles pour le match"></textarea>
+          </label>
+          <div class="form-actions">
+            <button id="calendarSubmitBtn" type="submit" class="primary-btn">Ajouter au calendrier</button>
+            <button id="cancelCalendarEditBtn" type="button" class="secondary-btn hidden">Annuler</button>
+          </div>
+        </form>
+        <div class="card roster-card">
+          <div class="card-title-row">
+            <h3>Matchs de l'année</h3>
+            <span id="calendarCount" class="pill">0 match</span>
+          </div>
+          <div id="calendarList" class="list calendar-list"></div>
+        </div>
+      </div>
+    </section>
+
     <section id="screen-new-game" class="screen">
       <div class="section-title">
         <div>
           <p class="eyebrow">Préparation</p>
           <h2>Nouvelle partie</h2>
-          <p>Créez la partie, puis bâtissez l’alignement.</p>
+          <p>Créez la partie, puis bâtissez l'alignement.</p>
         </div>
       </div>
       <form id="gameForm" class="card form-grid game-form">
@@ -148,7 +232,7 @@
           <input id="gameDate" type="date" required>
         </label>
         <label>Adversaire
-          <input id="gameOpponent" type="text" placeholder="Nom de l’adversaire" required>
+          <input id="gameOpponent" type="text" placeholder="Nom de l'adversaire" required>
         </label>
         <label>Terrain
           <input id="gameField" type="text" placeholder="Terrain">
@@ -168,6 +252,12 @@
         </div>
         <label>Nombre de manches
           <input id="gameInnings" type="number" min="1" max="12" value="7" required>
+        </label>
+        <label>Mode de suivi adverse
+          <select id="opponentTrackingMode">
+            <option value="simple">Simplifié - points par manche</option>
+            <option value="complete">Complet - frappeur par frappeur</option>
+          </select>
         </label>
         <button type="submit" class="primary-btn wide submit-large">Créer la partie</button>
       </form>
@@ -195,6 +285,22 @@
           <div id="lineupList" class="lineup-list"></div>
           <button id="startGameBtn" class="primary-btn wide submit-large" disabled>Démarrer la partie</button>
         </div>
+      </div>
+      <div id="opponentLineupSection" class="card opponent-lineup-card hidden">
+        <div class="card-title-row">
+          <div>
+            <h3>Alignement adverse</h3>
+            <p>Numéros seulement acceptés. Minimum recommandé : 9 frappeurs.</p>
+          </div>
+          <span id="opponentLineupCount" class="pill">0 adversaire</span>
+        </div>
+        <form id="opponentBatterForm" class="inline-form">
+          <label>Numéro adverse
+            <input id="opponentBatterNumber" type="number" min="0" max="99" placeholder="12">
+          </label>
+          <button type="submit" class="primary-btn">Ajouter</button>
+        </form>
+        <div id="opponentLineupList" class="lineup-list"></div>
       </div>
     </section>
 
@@ -274,25 +380,29 @@
         </div>
       </div>
       <div id="statsSummary" class="stats-summary"></div>
+      <div class="section-tabs"><span class="mini-badge team-badge">Notre équipe</span></div>
       <div class="card table-wrap stats-table-card">
         <table>
           <thead>
             <tr>
-              <th>Joueur</th>
-              <th>AB</th>
-              <th>H</th>
-              <th>1B</th>
-              <th>2B</th>
-              <th>3B</th>
-              <th>HR</th>
-              <th>BB</th>
-              <th>PP</th>
-              <th>P</th>
-              <th>MOY</th>
+              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>PP</th><th>P</th><th>MOY</th>
             </tr>
           </thead>
           <tbody id="statsBody"></tbody>
         </table>
+      </div>
+      <div id="opponentStatsSection" class="stats-block hidden">
+        <div class="section-tabs"><span class="mini-badge opponent-badge">Adversaire</span></div>
+        <div class="card table-wrap stats-table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>PP</th><th>P</th><th>MOY</th>
+              </tr>
+            </thead>
+            <tbody id="opponentStatsBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -319,7 +429,7 @@
       <div class="two-column">
         <form id="settingsForm" class="card form-card">
           <h3>Équipe</h3>
-          <label>Nom de l’équipe
+          <label>Nom de l'équipe
             <input id="teamNameInput" type="text" required>
           </label>
           <button type="submit" class="primary-btn">Sauvegarder</button>
@@ -329,7 +439,7 @@
           <p id="storageState" class="storage-state"></p>
           <div class="offline-panel">
             <h3>Utilisation hors ligne</h3>
-            <p>Ouvrez l’application une première fois avec Internet, puis ajoutez-la à l’écran d’accueil de l’iPad. Ensuite, elle pourra être utilisée au terrain sans Wi-Fi. Les données sont sauvegardées localement sur l’iPad.</p>
+            <p>Ouvrez l'application une première fois avec Internet, puis ajoutez-la à l'écran d'accueil de l'iPad. Ensuite, elle pourra être utilisée au terrain sans Wi-Fi. Les données sont sauvegardées localement sur l'iPad.</p>
             <div class="offline-status-grid">
               <div><span>Statut réseau</span><strong id="settingsNetworkStatus">En ligne</strong></div>
               <div><span>Sauvegarde locale</span><strong>Active</strong></div>
@@ -348,6 +458,59 @@
       </div>
     </section>
   </main>
+
+  <div id="defensiveOutModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="defensiveOutTitle">
+    <div class="modal-card defensive-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow">Retrait</p>
+          <h2 id="defensiveOutTitle">Entrer le retrait défensif</h2>
+        </div>
+        <button id="closeDefensiveOutBtn" type="button" class="small-btn secondary-btn" aria-label="Fermer">Annuler</button>
+      </div>
+
+      <div class="defensive-modal-grid">
+        <section class="defensive-control-panel">
+          <h3>Type de retrait</h3>
+          <div class="defensive-type-group" role="group" aria-label="Type de retrait">
+            <button type="button" class="defensive-type-btn active" data-defensive-type="fly">Fly</button>
+            <button type="button" class="defensive-type-btn" data-defensive-type="groundout">Au sol</button>
+            <button type="button" class="defensive-type-btn" data-defensive-type="unassisted">Non assisté</button>
+            <button type="button" class="defensive-type-btn" data-defensive-type="doubleplay">Double jeu</button>
+          </div>
+
+          <div class="defensive-preview">
+            <div>
+              <span>Type</span>
+              <strong id="defensiveTypePreview">Fly</strong>
+            </div>
+            <div>
+              <span>Séquence</span>
+              <strong id="defensiveSequencePreview">-</strong>
+            </div>
+            <div>
+              <span>Code</span>
+              <strong id="defensiveCodePreview">-</strong>
+            </div>
+            <div>
+              <span>Description</span>
+              <strong id="defensiveLabelPreview">Sélectionnez une position.</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="interactive-field-panel">
+          <div id="interactiveField" class="interactive-field" aria-label="Terrain défensif interactif"></div>
+        </section>
+      </div>
+
+      <div class="modal-actions">
+        <button id="confirmDefensiveOutBtn" type="button" class="primary-btn">Confirmer</button>
+        <button id="resetDefensiveOutBtn" type="button" class="warning-btn">Réinitialiser</button>
+        <button id="cancelDefensiveOutBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
 
