@@ -259,6 +259,44 @@
             <option value="complete">Complet - frappeur par frappeur</option>
           </select>
         </label>
+        <section class="lineup-mode-settings wide">
+          <h3>Mode de gestion de l'alignement</h3>
+          <div class="form-row">
+            <label>Notre Ã©quipe
+              <select id="lineupMode">
+                <option value="prepared">Alignement prÃ©parÃ© avant la partie</option>
+                <option value="dynamic">Alignement dynamique pendant la partie</option>
+              </select>
+            </label>
+            <label>Adversaire
+              <select id="opponentLineupMode">
+                <option value="dynamic">Alignement adverse dynamique pendant la partie</option>
+                <option value="prepared">Alignement adverse prÃ©parÃ© avant la partie</option>
+              </select>
+            </label>
+          </div>
+        </section>
+        <section class="run-limit-settings wide">
+          <div class="card-title-row">
+            <div>
+              <h3>Limite de points par manche</h3>
+              <p>Option utile pour les ligues avec maximum de points par demi-manche.</p>
+            </div>
+          </div>
+          <div class="run-limit-toggle">
+            <label class="check-row">
+              <input id="runLimitEnabled" type="checkbox">
+              <span>Activer une limite</span>
+            </label>
+            <label class="check-row">
+              <input id="runLimitSkipLast" type="checkbox">
+              <span>Ne pas appliquer à la dernière manche</span>
+            </label>
+          </div>
+          <label id="runLimitValueWrap">Maximum par manche
+            <input id="runLimitPerInning" type="number" min="1" max="20" value="5" disabled>
+          </label>
+        </section>
         <button type="submit" class="primary-btn wide submit-large">Créer la partie</button>
       </form>
     </section>

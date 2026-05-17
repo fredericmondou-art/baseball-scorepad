@@ -478,6 +478,31 @@ textarea {
   gap: 8px;
 }
 
+.run-limit-settings {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.run-limit-settings h3 {
+  margin: 0;
+}
+
+.run-limit-settings p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.run-limit-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1359,7 +1384,8 @@ textarea {
   .management-grid,
   .report-grid,
   .offline-status-grid,
-  .inline-form {
+  .inline-form,
+  .run-limit-toggle {
     grid-template-columns: 1fr;
   }
 

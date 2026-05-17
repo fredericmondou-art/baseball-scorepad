@@ -47,6 +47,7 @@ function initApp() {
   setupLiveActions();
   setupDefensiveOutModal();
   setupSegmentedGameForm();
+  renderRunLimitSettings();
   setupOfflineStatus();
   registerServiceWorker();
   fillPositionSelect();
@@ -96,6 +97,7 @@ function setupForms() {
   $("#resetDataBtn").addEventListener("click", resetAllData);
   $("#exportDataBtn").addEventListener("click", exportData);
   $("#importDataInput").addEventListener("change", importData);
+  $("#runLimitEnabled").addEventListener("change", renderRunLimitSettings);
 }
 
 function setupLiveActions() {
@@ -244,6 +246,7 @@ function migrateData() {
 
 function normalizeGame(game) {
   const innings = Number(game.innings || DEFAULT_INNINGS);
+  const migratedRunLimit = migrateRunLimitSettings(game);
   return {
     id: game.id || createId("game"),
     date: game.date || "",
@@ -267,8 +270,19 @@ function normalizeGame(game) {
     currentOpponentBatterIndex: Number(game.currentOpponentBatterIndex || 0),
     currentBattingSide: game.currentBattingSide || "team",
     opponentTrackingMode: game.opponentTrackingMode || "simple",
+    runLimitEnabled: migratedRunLimit.runLimitEnabled,
+    runLimitPerInning: migratedRunLimit.runLimitPerInning,
+    runLimitAppliesToLastInning: migratedRunLimit.runLimitAppliesToLastInning,
     history: Array.isArray(game.history) ? game.history : [],
     status: game.status || "préparation"
+  };
+}
+
+function migrateRunLimitSettings(game) {
+  return {
+    runLimitEnabled: game.runLimitEnabled === true,
+    runLimitPerInning: game.runLimitPerInning ? Number(game.runLimitPerInning) : null,
+    runLimitAppliesToLastInning: game.runLimitAppliesToLastInning !== false
   };
 }
 
@@ -546,6 +560,9 @@ function createGameFromCalendarEvent(eventId) {
     innings: DEFAULT_INNINGS,
     linkedGameId: event.id,
     opponentTrackingMode: "simple",
+    runLimitEnabled: false,
+    runLimitPerInning: null,
+    runLimitAppliesToLastInning: true,
     status: "brouillon"
   });
 
@@ -561,8 +578,46 @@ function setDefaultGameDate() {
   $("#gameDate").value = new Date().toISOString().slice(0, 10);
 }
 
+function renderRunLimitSettings() {
+  const enabled = $("#runLimitEnabled")?.checked || false;
+  if (!$("#runLimitPerInning")) return;
+  $("#runLimitPerInning").disabled = !enabled;
+  $("#runLimitPerInning").required = enabled;
+  $("#runLimitValueWrap").classList.toggle("muted-card", !enabled);
+}
+
+function validateRunLimitSettings() {
+  const enabled = $("#runLimitEnabled").checked;
+  const value = Number($("#runLimitPerInning").value || 5);
+  if (!enabled) {
+    return {
+      runLimitEnabled: false,
+      runLimitPerInning: null,
+      runLimitAppliesToLastInning: true
+    };
+  }
+  if (!Number.isFinite(value) || value < 1 || value > 20) {
+    showToast("La limite doit être entre 1 et 20 points.", "warning");
+    return null;
+  }
+  return {
+    runLimitEnabled: true,
+    runLimitPerInning: value,
+    runLimitAppliesToLastInning: !$("#runLimitSkipLast").checked
+  };
+}
+
+function applyRunLimitToGameForm(game) {
+  $("#runLimitEnabled").checked = game.runLimitEnabled === true;
+  $("#runLimitPerInning").value = game.runLimitPerInning || 5;
+  $("#runLimitSkipLast").checked = game.runLimitEnabled === true && game.runLimitAppliesToLastInning === false;
+  renderRunLimitSettings();
+}
+
 function createGame(event) {
   event.preventDefault();
+  const runLimitSettings = validateRunLimitSettings();
+  if (!runLimitSettings) return;
   const game = buildGame({
     date: $("#gameDate").value,
     opponent: $("#gameOpponent").value.trim(),
@@ -570,6 +625,7 @@ function createGame(event) {
     homeAway: $("#gameHomeAway").value,
     innings: Math.max(1, Number($("#gameInnings").value || DEFAULT_INNINGS)),
     opponentTrackingMode: $("#opponentTrackingMode").value,
+    ...runLimitSettings,
     status: "préparation",
     linkedGameId: null
   });
@@ -581,6 +637,7 @@ function createGame(event) {
   setDefaultGameDate();
   $("#gameHomeAway").value = "local";
   $("#opponentTrackingMode").value = "simple";
+  applyRunLimitToGameForm({ runLimitEnabled: false, runLimitPerInning: null, runLimitAppliesToLastInning: true });
   $$("[data-home-away]").forEach((button) => {
     button.classList.toggle("active", button.dataset.homeAway === "local");
   });
@@ -588,7 +645,7 @@ function createGame(event) {
   showToast("Partie créée.", "success");
 }
 
-function buildGame({ date, opponent, field, homeAway, innings, opponentTrackingMode, status, linkedGameId }) {
+function buildGame({ date, opponent, field, homeAway, innings, opponentTrackingMode, runLimitEnabled = false, runLimitPerInning = null, runLimitAppliesToLastInning = true, status, linkedGameId }) {
   return normalizeGame({
     id: createId("game"),
     date,
@@ -612,6 +669,9 @@ function buildGame({ date, opponent, field, homeAway, innings, opponentTrackingM
     currentOpponentBatterIndex: 0,
     currentBattingSide: "team",
     opponentTrackingMode,
+    runLimitEnabled,
+    runLimitPerInning,
+    runLimitAppliesToLastInning,
     history: [],
     status
   });
@@ -988,6 +1048,10 @@ function recordAtBat(action, defensePlay = null) {
   renderAll();
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
 
+  if (runsScored > 0) {
+    checkRunLimitAfterScoring(game);
+  }
+
   if (outsAdded && game.outs >= 3 && confirm("Trois retraits. Changer de demi-manche?")) {
     endHalfInning(false);
   }
@@ -1098,6 +1162,39 @@ function scoreRun(game, playerId, side) {
   return 1;
 }
 
+function getCurrentHalfInningRuns(game) {
+  if (!game) return 0;
+  ensureInningScore(game, game.currentInning);
+  const inning = game.inningScores[game.currentInning - 1] || { team: 0, opponent: 0 };
+  return getBattingSide(game) === "opponent" ? Number(inning.opponent || 0) : Number(inning.team || 0);
+}
+
+function isRunLimitReached(game) {
+  if (!game?.runLimitEnabled || !game.runLimitPerInning) return false;
+  if (game.runLimitAppliesToLastInning === false && game.currentInning >= game.innings) return false;
+  return getCurrentHalfInningRuns(game) >= Number(game.runLimitPerInning);
+}
+
+function checkRunLimitAfterScoring(game) {
+  if (!isRunLimitReached(game)) return false;
+  return promptRunLimitReached(game);
+}
+
+function promptRunLimitReached(game) {
+  const limit = Number(game.runLimitPerInning);
+  const shouldEnd = confirm(`Limite de ${limit} points atteinte pour cette demi-manche. Voulez-vous terminer la demi-manche maintenant ?`);
+  if (shouldEnd) {
+    endHalfInning(false);
+  }
+  return shouldEnd;
+}
+
+function runLimitDescription(game) {
+  if (!game?.runLimitEnabled || !game.runLimitPerInning) return "Aucune";
+  const suffix = game.runLimitAppliesToLastInning === false ? ", sauf dernière manche" : "";
+  return `${game.runLimitPerInning} points / manche${suffix}`;
+}
+
 function markRunForPlayer(game, playerId, side) {
   const list = getAtBatList(game, side);
   for (let index = list.length - 1; index >= 0; index -= 1) {
@@ -1171,6 +1268,15 @@ function adjustOpponentScore(delta) {
   updateCurrentGame(game);
   renderAll();
   showToast("Score adverse ajusté.", "info");
+  if (delta > 0 && game.runLimitEnabled && game.runLimitPerInning && !(game.runLimitAppliesToLastInning === false && game.currentInning >= game.innings)) {
+    const limit = Number(game.runLimitPerInning);
+    if (inning.opponent > limit) {
+      alert(`Attention : la limite est de ${limit} points par manche. Vous avez entré ${inning.opponent} points.`);
+    }
+    if (getBattingSide(game) === "opponent" && inning.opponent >= limit) {
+      promptRunLimitReached(game);
+    }
+  }
 }
 
 function finishGame() {
@@ -1244,6 +1350,8 @@ function renderLive() {
     ["Manche", `${game.currentInning}`],
     ["Demi", game.half],
     ["Retraits", `${game.outs} / 3`],
+    ["Limite", runLimitDescription(game)],
+    ["Points cette demi-manche", game.runLimitEnabled && game.runLimitPerInning ? `${getCurrentHalfInningRuns(game)} / ${game.runLimitPerInning}` : `${getCurrentHalfInningRuns(game)}`],
     ["Frappeur actuel", batter ? displayBatterName(batter, battingSide) : "-"],
     ["Prochain frappeur", next ? displayBatterName(next, battingSide) : "-"],
     ["Dernière action", lastAction],
@@ -1435,6 +1543,7 @@ function renderReport() {
           ["Terrain", game.field || "-"],
           ["Local/Visiteur", game.homeAway],
           ["Mode adverse", game.opponentTrackingMode === "complete" ? "Complet" : "Simplifié"],
+          ["Limite de points par manche", runLimitDescription(game)],
           ["Pointage", `${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent}`],
           ["Statut", game.status]
         ])}
