@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#123b63">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ScorePad">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Baseball ScorePad</title>
+  <link rel="manifest" href="manifest.json">
+  <!-- Icônes PWA simples générées localement; elles peuvent être remplacées plus tard. -->
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-block">
+      <button class="home-chip" data-screen="home" aria-label="Retour accueil">⌂</button>
+      <div>
+        <p class="eyebrow">Marquage local hors ligne</p>
+        <h1>Baseball ScorePad</h1>
+      </div>
+    </div>
+    <div class="header-status">
+      <span id="headerTeam" class="status-pill">Mon équipe</span>
+      <span id="headerGameStatus" class="status-pill status-neutral">Aucune partie</span>
+      <span class="status-pill status-save">Sauvegarde locale active</span>
+      <span id="networkStatus" class="status-pill status-neutral">Connexion disponible</span>
+      <span id="pwaStatus" class="status-pill status-neutral">PWA en préparation</span>
+    </div>
+    <nav class="top-nav" aria-label="Navigation principale">
+      <button class="nav-btn active" data-screen="home"><span>⌂</span> Accueil</button>
+      <button class="nav-btn" data-screen="players"><span>#</span> Joueurs</button>
+      <button class="nav-btn" data-screen="new-game"><span>+</span> Partie</button>
+      <button class="nav-btn" data-screen="lineup"><span>≡</span> Alignement</button>
+      <button class="nav-btn" data-screen="live"><span>◆</span> Match</button>
+      <button class="nav-btn" data-screen="stats"><span>%</span> Stats</button>
+      <button class="nav-btn" data-screen="report"><span>▤</span> Rapport</button>
+      <button class="nav-btn" data-screen="settings"><span>⚙</span> Paramètres</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="screen-home" class="screen active">
+      <div class="dashboard-hero">
+        <div>
+          <p class="eyebrow">Tableau de bord</p>
+          <h2>Prêt pour la prochaine manche.</h2>
+          <p>Gérez votre équipe, préparez l’alignement et marquez chaque présence au bâton avec une interface pensée pour le terrain.</p>
+        </div>
+        <div id="homeSummary" class="score-summary"></div>
+      </div>
+
+      <div class="home-grid">
+        <article class="home-card primary-card">
+          <div>
+            <h3>Nouvelle partie</h3>
+            <p>Créer une partie et passer à l’alignement.</p>
+          </div>
+          <button class="primary-btn" data-screen="new-game">Créer</button>
+        </article>
+        <article class="home-card">
+          <div>
+            <h3>Continuer la partie</h3>
+            <p>Reprendre le match actif au bon frappeur.</p>
+          </div>
+          <button id="continueGameBtn">Continuer</button>
+        </article>
+        <article class="home-card">
+          <div>
+            <h3>Joueurs</h3>
+            <p>Ajouter, consulter ou retirer les joueurs.</p>
+          </div>
+          <button data-screen="players">Gérer</button>
+        </article>
+        <article class="home-card">
+          <div>
+            <h3>Statistiques</h3>
+            <p>Voir les performances individuelles.</p>
+          </div>
+          <button data-screen="stats">Voir</button>
+        </article>
+        <article class="home-card">
+          <div>
+            <h3>Feuille de match</h3>
+            <p>Consulter et imprimer le rapport complet.</p>
+          </div>
+          <button data-screen="report">Ouvrir</button>
+        </article>
+        <article class="home-card">
+          <div>
+            <h3>Paramètres</h3>
+            <p>Nom d’équipe, sauvegarde et données.</p>
+          </div>
+          <button data-screen="settings">Régler</button>
+        </article>
+      </div>
+    </section>
+
+    <section id="screen-players" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Effectif</p>
+          <h2>Joueurs</h2>
+          <p>Ajoutez les joueurs actifs avant de créer une partie.</p>
+        </div>
+      </div>
+      <div class="two-column">
+        <form id="playerForm" class="card form-card">
+          <h3>Ajouter un joueur</h3>
+          <div class="form-row">
+            <label>Numéro
+              <input id="playerNumber" type="number" min="0" max="99" required>
+            </label>
+            <label>Position
+              <select id="playerPosition"></select>
+            </label>
+          </div>
+          <label>Prénom
+            <input id="playerFirstName" type="text" required>
+          </label>
+          <label>Nom
+            <input id="playerLastName" type="text" required>
+          </label>
+          <button type="submit" class="primary-btn">Ajouter le joueur</button>
+        </form>
+        <div class="card roster-card">
+          <div class="card-title-row">
+            <h3>Liste des joueurs</h3>
+            <span id="playersCount" class="pill">0 joueur</span>
+          </div>
+          <div id="playersList" class="list roster-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-new-game" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Préparation</p>
+          <h2>Nouvelle partie</h2>
+          <p>Créez la partie, puis bâtissez l’alignement.</p>
+        </div>
+      </div>
+      <form id="gameForm" class="card form-grid game-form">
+        <label>Date
+          <input id="gameDate" type="date" required>
+        </label>
+        <label>Adversaire
+          <input id="gameOpponent" type="text" placeholder="Nom de l’adversaire" required>
+        </label>
+        <label>Terrain
+          <input id="gameField" type="text" placeholder="Terrain">
+        </label>
+        <label class="hidden-select">Local / Visiteur
+          <select id="gameHomeAway">
+            <option value="local">Local</option>
+            <option value="visiteur">Visiteur</option>
+          </select>
+        </label>
+        <div class="field-group">
+          <span class="field-label">Local / Visiteur</span>
+          <div class="segmented" role="group" aria-label="Local ou visiteur">
+            <button type="button" class="segment-btn active" data-home-away="local">Local</button>
+            <button type="button" class="segment-btn" data-home-away="visiteur">Visiteur</button>
+          </div>
+        </div>
+        <label>Nombre de manches
+          <input id="gameInnings" type="number" min="1" max="12" value="7" required>
+        </label>
+        <button type="submit" class="primary-btn wide submit-large">Créer la partie</button>
+      </form>
+    </section>
+
+    <section id="screen-lineup" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Ordre offensif</p>
+          <h2>Alignement</h2>
+          <p>Minimum 9 joueurs requis pour démarrer.</p>
+        </div>
+        <span id="lineupCount" class="pill">0 joueur</span>
+      </div>
+      <div class="two-column lineup-layout">
+        <div class="card">
+          <h3>Joueurs disponibles</h3>
+          <div id="availablePlayers" class="list"></div>
+        </div>
+        <div class="card">
+          <div class="card-title-row">
+            <h3>Ordre des frappeurs</h3>
+            <span class="hint">9 requis</span>
+          </div>
+          <div id="lineupList" class="lineup-list"></div>
+          <button id="startGameBtn" class="primary-btn wide submit-large" disabled>Démarrer la partie</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-live" class="screen">
+      <div class="live-layout">
+        <aside class="live-panel">
+          <div class="scoreboard-card">
+            <p class="eyebrow">Tableau de match</p>
+            <div id="liveScoreboard"></div>
+          </div>
+          <div id="liveInfo" class="game-cards"></div>
+        </aside>
+
+        <section class="field-card">
+          <div class="field-heading">
+            <div>
+              <p class="eyebrow">Situation</p>
+              <h2>Terrain</h2>
+            </div>
+            <div id="outsDots" class="outs-dots" aria-label="Retraits"></div>
+          </div>
+          <div class="diamond">
+            <div class="infield"></div>
+            <div class="base base-second">
+              <strong>2B</strong>
+              <span id="baseSecond">Vide</span>
+            </div>
+            <div class="base base-third">
+              <strong>3B</strong>
+              <span id="baseThird">Vide</span>
+            </div>
+            <div class="base base-first">
+              <strong>1B</strong>
+              <span id="baseFirst">Vide</span>
+            </div>
+            <div class="base base-home">
+              <strong>Marbre</strong>
+              <span id="currentBatterField">-</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="actions-panel">
+          <div class="action-group">
+            <h2>Résultat au bâton</h2>
+            <div class="action-grid hit-actions">
+              <button class="hit-btn" data-action="single">Simple</button>
+              <button class="hit-btn" data-action="double">Double</button>
+              <button class="hit-btn" data-action="triple">Triple</button>
+              <button class="hr-btn" data-action="hr">Circuit</button>
+              <button class="walk-btn" data-action="bb">BB</button>
+              <button class="out-btn" data-action="out">Retrait</button>
+              <button class="error-btn" data-action="error">Erreur</button>
+              <button class="neutral-btn" data-action="sacrifice">Sacrifice</button>
+            </div>
+          </div>
+          <div class="action-group">
+            <h2>Gestion</h2>
+            <div class="management-grid">
+              <button id="endHalfBtn" class="secondary-btn">Fin de demi-manche</button>
+              <button id="oppPlusBtn" class="score-btn">+1 adversaire</button>
+              <button id="oppMinusBtn" class="score-btn">-1 adversaire</button>
+              <button id="undoBtn" class="warning-btn">Annuler dernière action</button>
+              <button id="finishGameBtn" class="danger-btn wide">Terminer la partie</button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="screen-stats" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Performance</p>
+          <h2>Statistiques</h2>
+          <p>Statistiques de la partie en cours ou de la dernière partie.</p>
+        </div>
+      </div>
+      <div id="statsSummary" class="stats-summary"></div>
+      <div class="card table-wrap stats-table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Joueur</th>
+              <th>AB</th>
+              <th>H</th>
+              <th>1B</th>
+              <th>2B</th>
+              <th>3B</th>
+              <th>HR</th>
+              <th>BB</th>
+              <th>PP</th>
+              <th>P</th>
+              <th>MOY</th>
+            </tr>
+          </thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="screen-report" class="screen">
+      <div class="section-title report-actions">
+        <div>
+          <p class="eyebrow">Impression</p>
+          <h2>Feuille de match</h2>
+          <p>Résumé propre pour impression ou PDF.</p>
+        </div>
+        <button id="printBtn" class="primary-btn">Imprimer / Exporter PDF</button>
+      </div>
+      <div id="reportContent" class="report-content"></div>
+    </section>
+
+    <section id="screen-settings" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Application</p>
+          <h2>Paramètres</h2>
+          <p>Réglages simples, sauvegarde locale et transfert de données.</p>
+        </div>
+      </div>
+      <div class="two-column">
+        <form id="settingsForm" class="card form-card">
+          <h3>Équipe</h3>
+          <label>Nom de l’équipe
+            <input id="teamNameInput" type="text" required>
+          </label>
+          <button type="submit" class="primary-btn">Sauvegarder</button>
+        </form>
+        <div class="card settings-card">
+          <h3>Sauvegarde locale</h3>
+          <p id="storageState" class="storage-state"></p>
+          <div class="offline-panel">
+            <h3>Utilisation hors ligne</h3>
+            <p>Ouvrez l’application une première fois avec Internet, puis ajoutez-la à l’écran d’accueil de l’iPad. Ensuite, elle pourra être utilisée au terrain sans Wi-Fi. Les données sont sauvegardées localement sur l’iPad.</p>
+            <div class="offline-status-grid">
+              <div><span>Statut réseau</span><strong id="settingsNetworkStatus">En ligne</strong></div>
+              <div><span>Sauvegarde locale</span><strong>Active</strong></div>
+              <div><span>PWA</span><strong id="settingsPwaStatus">En préparation</strong></div>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button id="exportDataBtn" class="secondary-btn">Exporter JSON</button>
+            <label class="import-label">
+              Importer JSON
+              <input id="importDataInput" type="file" accept="application/json,.json">
+            </label>
+            <button id="resetDataBtn" class="danger-btn wide">Réinitialiser toutes les données</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

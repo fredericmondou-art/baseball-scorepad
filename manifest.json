@@ -1,0 +1,25 @@
+{
+  "name": "Baseball ScorePad",
+  "short_name": "ScorePad",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#edf3f5",
+  "theme_color": "#123b63",
+  "description": "Outil de marquage de partie de baseball pour iPad",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
