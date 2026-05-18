@@ -20,6 +20,25 @@ const DEFENSIVE_OUT_TYPES = {
   unassisted: "Non assisté",
   doubleplay: "Double jeu"
 };
+const FIELD_POINTS = {
+  home: { x: 50, y: 82 },
+  "1B": { x: 72, y: 61 },
+  "2B": { x: 50, y: 39 },
+  "3B": { x: 28, y: 61 },
+  "1": { x: 50, y: 57 },
+  "2": { x: 50, y: 78 },
+  "3": { x: 72, y: 61 },
+  "4": { x: 59, y: 44 },
+  "5": { x: 28, y: 61 },
+  "6": { x: 41, y: 44 },
+  "7": { x: 20, y: 20 },
+  "8": { x: 50, y: 12 },
+  "9": { x: 80, y: 20 },
+  "outfield-left": { x: 23, y: 18 },
+  "outfield-center": { x: 50, y: 10 },
+  "outfield-right": { x: 77, y: 18 },
+  "outfield-deep": { x: 50, y: 4 }
+};
 
 let appData = {
   team: {
@@ -352,6 +371,7 @@ function normalizeGame(game) {
     opponentLineup: Array.isArray(game.opponentLineup) ? game.opponentLineup : [],
     atBats: normalizeAtBats(game.atBats),
     opponentAtBats: normalizeAtBats(game.opponentAtBats),
+    playByPlay: Array.isArray(game.playByPlay) ? game.playByPlay : [],
     scoreTeam: Number(game.scoreTeam || 0),
     scoreOpponent: Number(game.scoreOpponent || 0),
     inningScores: Array.isArray(game.inningScores) ? game.inningScores : createInningScores(innings),
@@ -892,6 +912,7 @@ function buildGame({ date, time = "", opponent, field, gameType = "", notes = ""
     opponentLineup: [],
     atBats: [],
     opponentAtBats: [],
+    playByPlay: [],
     scoreTeam: 0,
     scoreOpponent: 0,
     inningScores: createInningScores(innings),
@@ -1641,13 +1662,17 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
     createdAt: new Date().toISOString()
   };
   actionInfo.description = buildPlayByPlayDescription(actionInfo);
-  game.liveLastAction = actionInfo.description;
+  const playEvent = createPlayByPlayEvent(game, actionInfo);
+  game.playByPlay.unshift(playEvent);
+  game.playByPlay = game.playByPlay.slice(0, 120);
+  game.liveLastAction = playEvent.description;
   getAtBatList(game, side).push(atBat);
   advanceBatterIndex(game, side);
   updateCurrentGame(game);
   syncLiveGameState(game);
-  publishPlayByPlayEvent(game, actionInfo);
+  publishPlayByPlayEvent(game, playEvent);
   renderAll();
+  playGameAnimation(playEvent.animation);
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
 
   if (runsScored > 0) {
@@ -1850,17 +1875,21 @@ function endHalfInning(shouldSnapshot) {
     ensureInningScore(game, game.currentInning);
   }
   game.currentBattingSide = getBattingSide(game);
-  game.liveLastAction = `Changement de demi-manche : ${game.half} ${game.currentInning}e`;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  publishPlayByPlayEvent(game, {
+  const playEvent = createPlayByPlayEvent(game, {
     inning: game.currentInning,
     half: game.half,
     battingSide: game.currentBattingSide,
     result: "Changement de demi-manche",
-    description: game.liveLastAction
+    description: `Changement de demi-manche : ${game.half} ${game.currentInning}e`
   });
+  game.playByPlay.unshift(playEvent);
+  game.playByPlay = game.playByPlay.slice(0, 120);
+  game.liveLastAction = playEvent.description;
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  publishPlayByPlayEvent(game, playEvent);
   renderAll();
+  playGameAnimation(playEvent.animation);
   showToast("Demi-manche changée.", "info");
 }
 
@@ -1876,22 +1905,25 @@ function adjustOpponentScore(delta) {
   }
   inning.opponent = Math.max(0, inning.opponent + delta);
   game.scoreOpponent = game.inningScores.reduce((total, row) => total + (row.opponent || 0), 0);
+  let playEvent = null;
   if (delta > 0) {
-    game.liveLastAction = `${game.opponent || "Adversaire"} : ${delta} point${delta > 1 ? "s" : ""} ajouté${delta > 1 ? "s" : ""}`;
-  }
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  if (delta > 0) {
-    publishPlayByPlayEvent(game, {
+    playEvent = createPlayByPlayEvent(game, {
       inning: game.currentInning,
       half: game.half,
       battingSide: "opponent",
       result: "Point adverse",
       runsScored: delta,
-      description: game.liveLastAction
+      description: `${game.opponent || "Adversaire"} : ${delta} point${delta > 1 ? "s" : ""} ajouté${delta > 1 ? "s" : ""}`
     });
+    game.playByPlay.unshift(playEvent);
+    game.playByPlay = game.playByPlay.slice(0, 120);
+    game.liveLastAction = playEvent.description;
   }
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  if (playEvent) publishPlayByPlayEvent(game, playEvent);
   renderAll();
+  if (playEvent) playGameAnimation(playEvent.animation);
   showToast("Score adverse ajusté.", "info");
   if (delta > 0 && game.runLimitEnabled && game.runLimitPerInning && !(game.runLimitAppliesToLastInning === false && game.currentInning >= game.innings)) {
     const limit = Number(game.runLimitPerInning);
@@ -1912,16 +1944,19 @@ function finishGame() {
   game.status = "terminée";
   const calendarEvent = appData.calendar.find((event) => event.linkedGameId === game.id || event.id === game.linkedGameId);
   if (calendarEvent) calendarEvent.status = "Joué";
-  game.liveLastAction = `Fin de partie : ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  publishPlayByPlayEvent(game, {
+  const playEvent = createPlayByPlayEvent(game, {
     inning: game.currentInning,
     half: game.half,
     battingSide: game.currentBattingSide,
     result: "Fin de partie",
-    description: game.liveLastAction
+    description: `Fin de partie : ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`
   });
+  game.playByPlay.unshift(playEvent);
+  game.playByPlay = game.playByPlay.slice(0, 120);
+  game.liveLastAction = playEvent.description;
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  publishPlayByPlayEvent(game, playEvent);
   saveData();
   renderAll();
   showToast("Partie terminée.", "success");
@@ -1953,6 +1988,7 @@ function renderLive() {
     renderMatchScreen(game);
     $("#outsDots").innerHTML = renderOutDots(0);
     renderBases(null);
+    renderPlayByPlay(game);
     return;
   }
 
@@ -2007,6 +2043,7 @@ function renderLive() {
 
   $("#outsDots").innerHTML = renderOutDots(game.outs);
   renderBases(game);
+  renderPlayByPlay(game);
 }
 
 function renderMatchScreen(game = getCurrentGame()) {
@@ -2112,6 +2149,7 @@ function lineupReportStatus(game, side) {
 }
 
 function getLastActionLabel(game) {
+  if (game.playByPlay?.length) return game.playByPlay[0].description || "-";
   const lastTeamAtBat = game.atBats[game.atBats.length - 1] || null;
   const lastOpponentAtBat = game.opponentAtBats[game.opponentAtBats.length - 1] || null;
   const last = [lastTeamAtBat, lastOpponentAtBat]
@@ -2120,6 +2158,119 @@ function getLastActionLabel(game) {
   if (!last) return "-";
   if (last.defensePlay?.code) return `Retrait ${last.defensePlay.code}`;
   return last.result || "-";
+}
+
+function createPlayByPlayEvent(game, actionInfo) {
+  const event = {
+    id: createId("pbp"),
+    inning: actionInfo.inning || game.currentInning,
+    half: actionInfo.half || game.half,
+    battingSide: actionInfo.battingSide || getBattingSide(game),
+    batter: actionInfo.batter || "",
+    result: actionInfo.result || "",
+    defensePlay: actionInfo.defensePlay || "",
+    runsScored: Number(actionInfo.runsScored || 0),
+    description: actionInfo.description || buildPlayByPlayDescription(actionInfo),
+    createdAt: actionInfo.createdAt || new Date().toISOString()
+  };
+  event.animation = actionInfo.animation || buildPlayAnimation(event, game);
+  return event;
+}
+
+function buildPlayAnimation(actionInfo) {
+  const result = String(actionInfo.result || "").toLowerCase();
+  const code = actionInfo.defensePlay || "";
+  if (code) {
+    const positions = code.replace(/^F/i, "").replace(/U$/i, "").split("-").map((item) => item.trim()).filter(Boolean);
+    const isFly = /^F/i.test(code);
+    const isDoublePlay = positions.length >= 3 || result.includes("double");
+    return {
+      type: isDoublePlay ? "doubleplay" : isFly ? "flyout" : "groundout",
+      code,
+      ballPath: ["home", ...positions],
+      runnerMovements: [],
+      highlightPositions: positions.map(Number).filter(Boolean),
+      message: `${isDoublePlay ? "Double jeu" : "Retrait"} ${code}`
+    };
+  }
+  if (result.includes("simple")) return playAnimation("single", actionInfo, ["home", "outfield-right"], [{ from: "home", to: "1B" }], `Simple de ${actionInfo.batter}`);
+  if (result.includes("double")) return playAnimation("double", actionInfo, ["home", "outfield-center"], [{ from: "home", to: "2B" }], `Double de ${actionInfo.batter}`);
+  if (result.includes("triple")) return playAnimation("triple", actionInfo, ["home", "outfield-left"], [{ from: "home", to: "3B" }], `Triple de ${actionInfo.batter}`);
+  if (result.includes("circuit")) return playAnimation("homerun", actionInfo, ["home", "outfield-deep"], [{ from: "home", to: "home" }], "Circuit !");
+  if (result.includes("bb")) return playAnimation("walk", actionInfo, ["home", "1B"], [{ from: "home", to: "1B" }], "But sur balles");
+  if (result.includes("changement")) return playAnimation("half", actionInfo, ["home", "2B"], [], actionInfo.description || "Changement de demi-manche");
+  if (result.includes("fin")) return playAnimation("final", actionInfo, ["home", "outfield-center"], [], "Fin de partie");
+  return playAnimation("generic", actionInfo, ["home", "outfield-center"], [], actionInfo.description || actionInfo.result || "Action");
+}
+
+function playAnimation(type, actionInfo, ballPath, runnerMovements, message) {
+  return {
+    type,
+    code: actionInfo.defensePlay || "",
+    ballPath,
+    runnerMovements,
+    highlightPositions: [],
+    message
+  };
+}
+
+function renderPlayByPlay(game) {
+  const panel = $("#markerPlayByPlay");
+  if (!panel) return;
+  const events = game?.playByPlay || [];
+  panel.innerHTML = `
+    <div class="card-title-row">
+      <h3>Play-by-Play</h3>
+      <span class="pill">${events.length} action${events.length > 1 ? "s" : ""}</span>
+    </div>
+    <div class="play-by-play-list">
+      ${events.length ? events.slice(0, 20).map(renderPlayByPlayItem).join("") : `<div class="empty-state">Les actions du match apparaîtront ici.</div>`}
+    </div>
+  `;
+}
+
+function renderPlayByPlayItem(event) {
+  return `
+    <div class="play-by-play-item">
+      <strong>${escapeHtml(event.half || "-")} ${escapeHtml(String(event.inning || "-"))}e — ${escapeHtml(event.battingSide === "opponent" ? "Adversaire" : "Notre équipe")}</strong>
+      <span>${escapeHtml(event.description || "-")}</span>
+    </div>
+  `;
+}
+
+function getFieldPointPosition(pointKey) {
+  return FIELD_POINTS[String(pointKey)] || FIELD_POINTS.home;
+}
+
+function playGameAnimation(animation, layerSelector = "#fieldAnimationLayer") {
+  const layer = document.querySelector(layerSelector);
+  if (!layer || !animation) return;
+  const points = (animation.ballPath || ["home", "outfield-center"]).map(getFieldPointPosition);
+  const lines = points.slice(1).map((point, index) => renderAnimationLine(points[index], point)).join("");
+  const highlights = (animation.highlightPositions || []).map((position) => {
+    const point = getFieldPointPosition(String(position));
+    return `<span class="field-highlight" style="left:${point.x}%;top:${point.y}%">${position}</span>`;
+  }).join("");
+  const ball = points.map((point, index) => `<span class="animated-ball step-${index}" style="--x:${point.x}%;--y:${point.y}%;--delay:${index * 180}ms"></span>`).join("");
+  layer.innerHTML = `
+    <div class="animation-message">${escapeHtml(animation.message || "Action")}</div>
+    ${lines}
+    ${highlights}
+    ${ball}
+  `;
+  layer.classList.add("playing");
+  window.setTimeout(() => {
+    layer.classList.remove("playing");
+    layer.innerHTML = "";
+  }, 3600);
+}
+
+function renderAnimationLine(start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.sqrt((dx * dx) + (dy * dy));
+  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+  return `<span class="field-path-line" style="left:${start.x}%;top:${start.y}%;width:${length}%;transform:rotate(${angle}deg)"></span>`;
 }
 
 function buildLiveGameState(game) {
@@ -2141,6 +2292,9 @@ function buildLiveGameState(game) {
       second: liveBaseName(game.bases?.second, game),
       third: liveBaseName(game.bases?.third, game)
     },
+    // Si la colonne manque dans Supabase:
+    // alter table public.live_games add column if not exists inning_scores jsonb default '{}'::jsonb;
+    inning_scores: game.inningScores || [],
     current_batter: currentBatter ? displayBatterName(currentBatter, side) : "",
     batting_side: side,
     status: normalizeGameStatus(game.status),
@@ -2157,10 +2311,17 @@ function liveBaseName(playerId, game) {
 
 async function syncLiveGameState(game) {
   if (!supabaseClient || !game?.liveEnabled || !game.publicGameId || !navigator.onLine) return false;
+  const payload = buildLiveGameState(game);
   try {
     const { error } = await supabaseClient
       .from("live_games")
-      .upsert(buildLiveGameState(game), { onConflict: "public_game_id" });
+      .upsert(payload, { onConflict: "public_game_id" });
+    if (error?.message?.includes("inning_scores")) {
+      const { inning_scores, ...fallbackPayload } = payload;
+      const retry = await supabaseClient.from("live_games").upsert(fallbackPayload, { onConflict: "public_game_id" });
+      if (retry.error) throw retry.error;
+      return true;
+    }
     if (error) throw error;
     return true;
   } catch (error) {
@@ -2181,6 +2342,9 @@ async function publishPlayByPlayEvent(game, actionInfo) {
     defense_play: actionInfo.defensePlay || "",
     runs_scored: Number(actionInfo.runsScored || 0),
     description: actionInfo.description || "",
+    // Si la colonne manque dans Supabase:
+    // alter table public.play_by_play add column if not exists animation jsonb default '{}'::jsonb;
+    animation: actionInfo.animation || {},
     created_at: actionInfo.createdAt || new Date().toISOString()
   };
 
@@ -2191,6 +2355,12 @@ async function publishPlayByPlayEvent(game, actionInfo) {
 
   try {
     const { error } = await supabaseClient.from("play_by_play").insert(event);
+    if (error?.message?.includes("animation")) {
+      const { animation, ...fallbackEvent } = event;
+      const retry = await supabaseClient.from("play_by_play").insert(fallbackEvent);
+      if (retry.error) throw retry.error;
+      return true;
+    }
     if (error) throw error;
     return true;
   } catch (error) {
@@ -2211,6 +2381,14 @@ async function syncPendingLiveEvents(game) {
   const pending = [...game.pendingLiveEvents];
   try {
     const { error } = await supabaseClient.from("play_by_play").insert(pending);
+    if (error?.message?.includes("animation")) {
+      const retry = await supabaseClient.from("play_by_play").insert(pending.map(({ animation, ...event }) => event));
+      if (retry.error) throw retry.error;
+      game.pendingLiveEvents = [];
+      updateCurrentGame(game);
+      showToast("Ã‰vÃ©nements live synchronisÃ©s.", "success");
+      return true;
+    }
     if (error) throw error;
     game.pendingLiveEvents = [];
     updateCurrentGame(game);
@@ -2848,6 +3026,7 @@ async function loadSpectatorGame(publicGameId) {
     spectatorPlayByPlay = events || [];
     $("#spectatorConnection").textContent = game ? "Connecté au live" : "Aucun match live trouvé.";
     renderSpectatorContent();
+    if (spectatorPlayByPlay[0]) window.setTimeout(() => playGameAnimation(getSpectatorAnimation(spectatorPlayByPlay[0]), "#spectatorAnimationLayer"), 50);
   } catch (error) {
     console.warn("Spectator load failed", error);
     $("#spectatorConnection").textContent = "Impossible de charger le match live.";
@@ -2869,6 +3048,7 @@ function subscribeSpectatorGame(publicGameId) {
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "play_by_play", filter: `public_game_id=eq.${publicGameId}` }, (payload) => {
         spectatorPlayByPlay = [payload.new, ...spectatorPlayByPlay].slice(0, 50);
         renderSpectatorContent();
+        window.setTimeout(() => playGameAnimation(getSpectatorAnimation(payload.new), "#spectatorAnimationLayer"), 50);
       })
       .subscribe()
   ];
@@ -2910,6 +3090,126 @@ function renderSpectatorContent() {
       `).join("") : `<p>Aucun événement publié.</p>`}
     </section>
   `;
+}
+
+function renderSpectatorContent() {
+  const container = $("#spectatorContent");
+  if (!container) return;
+  if (!spectatorGameState) {
+    container.innerHTML = `<div class="spectator-card"><p>Aucune donnée live pour le moment.</p></div>`;
+    return;
+  }
+  container.innerHTML = `
+    ${renderSpectatorScoreboard(spectatorGameState)}
+    ${renderInningScoreboard(spectatorGameState)}
+    ${renderSpectatorAnimatedField(spectatorGameState)}
+    ${renderSpectatorPlayByPlay(spectatorPlayByPlay)}
+  `;
+}
+
+function renderSpectatorScoreboard(liveGame) {
+  const team = liveGame.team_name || "Notre équipe";
+  const opponent = liveGame.opponent_name || "Adversaire";
+  const battingTeam = liveGame.batting_side === "opponent" ? opponent : team;
+  return `
+    <section class="virtual-scoreboard">
+      <div class="scoreboard-title">Virtual Scoreboard</div>
+      <div class="scoreboard-teams">
+        <div><span>${escapeHtml(team)}</span><strong>${liveGame.score_team ?? 0}</strong></div>
+        <div><span>${escapeHtml(opponent)}</span><strong>${liveGame.score_opponent ?? 0}</strong></div>
+      </div>
+      <div class="scoreboard-meta">
+        <span>${escapeHtml(liveGame.half || "—")} de la ${escapeHtml(String(liveGame.current_inning || "—"))}e manche</span>
+        <span>${renderOutsIndicator(liveGame.outs || 0)}</span>
+        <span>Au bâton : ${escapeHtml(battingTeam)}</span>
+        <span>Frappeur : ${escapeHtml(liveGame.current_batter || "—")}</span>
+        <span>Statut : ${escapeHtml(liveGame.status || "—")}</span>
+      </div>
+      ${renderBaseDiamond(liveGame.bases || {})}
+      <div class="scoreboard-last-action">${escapeHtml(liveGame.last_action || "Aucune action récente")}</div>
+    </section>
+  `;
+}
+
+function renderBaseDiamond(bases = {}) {
+  return `
+    <div class="scoreboard-bases" aria-label="Bases occupées">
+      <span class="score-base second ${bases.second ? "occupied" : ""}">2B</span>
+      <span class="score-base third ${bases.third ? "occupied" : ""}">3B</span>
+      <span class="score-base first ${bases.first ? "occupied" : ""}">1B</span>
+    </div>
+  `;
+}
+
+function renderInningScoreboard(liveGame) {
+  const scores = Array.isArray(liveGame.inning_scores) ? liveGame.inning_scores : [];
+  if (!scores.length) {
+    return `
+      <section class="spectator-card table-wrap">
+        <h2>Score par manche</h2>
+        <p>Total : ${escapeHtml(liveGame.team_name || "Notre équipe")} ${liveGame.score_team || 0} - ${liveGame.score_opponent || 0} ${escapeHtml(liveGame.opponent_name || "Adversaire")}</p>
+      </section>
+    `;
+  }
+  return `
+    <section class="spectator-card table-wrap">
+      <h2>Score par manche</h2>
+      <table class="inning-scoreboard">
+        <thead><tr><th>Équipe</th>${scores.map((row) => `<th>${row.inning}</th>`).join("")}<th>Total</th></tr></thead>
+        <tbody>
+          <tr><td>${escapeHtml(liveGame.team_name || "Notre équipe")}</td>${scores.map((row) => `<td>${row.team || 0}</td>`).join("")}<td>${liveGame.score_team || 0}</td></tr>
+          <tr><td>${escapeHtml(liveGame.opponent_name || "Adversaire")}</td>${scores.map((row) => `<td>${row.opponent || 0}</td>`).join("")}<td>${liveGame.score_opponent || 0}</td></tr>
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function renderOutsIndicator(outs = 0) {
+  return `<span class="scoreboard-outs">${[0, 1, 2].map((index) => `<i class="${index < Number(outs) ? "active" : ""}"></i>`).join("")}</span>`;
+}
+
+function renderSpectatorAnimatedField(liveGame) {
+  return `
+    <section class="spectator-card spectator-field-card">
+      <div class="card-title-row">
+        <h2>Terrain animé</h2>
+        <span class="mini-badge">${escapeHtml(spectatorBasesText(liveGame.bases || {}))}</span>
+      </div>
+      <div class="spectator-diamond">
+        <div class="infield"></div>
+        <div id="spectatorAnimationLayer" class="field-animation-layer"></div>
+        <div class="base base-second ${liveGame.bases?.second ? "occupied" : ""}"><strong>2B</strong><span>${escapeHtml(liveGame.bases?.second || "Vide")}</span></div>
+        <div class="base base-third ${liveGame.bases?.third ? "occupied" : ""}"><strong>3B</strong><span>${escapeHtml(liveGame.bases?.third || "Vide")}</span></div>
+        <div class="base base-first ${liveGame.bases?.first ? "occupied" : ""}"><strong>1B</strong><span>${escapeHtml(liveGame.bases?.first || "Vide")}</span></div>
+        <div class="base base-home"><strong>Marbre</strong><span>${escapeHtml(liveGame.current_batter || "—")}</span></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSpectatorPlayByPlay(events = []) {
+  return `
+    <section class="spectator-card spectator-feed">
+      <h2>Play-by-play</h2>
+      ${events.length ? events.map((event, index) => `
+        <div class="feed-item ${index === 0 ? "latest" : ""}">
+          <strong>${escapeHtml(event.half || "")} ${escapeHtml(String(event.inning || ""))}e</strong>
+          <span>${escapeHtml(event.description || event.result || "-")}</span>
+        </div>
+      `).join("") : `<p>Aucun événement publié.</p>`}
+    </section>
+  `;
+}
+
+function getSpectatorAnimation(event) {
+  if (event?.animation && Object.keys(event.animation).length) return event.animation;
+  return buildPlayAnimation({
+    result: event?.result || "",
+    defensePlay: event?.defense_play || "",
+    batter: event?.batter || "",
+    description: event?.description || ""
+  });
 }
 
 function spectatorBasesText(bases) {
