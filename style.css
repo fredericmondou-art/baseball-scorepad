@@ -501,10 +501,25 @@ main {
   margin: 4px 0 0;
 }
 
+.share-link-label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .share-link-input {
   width: 100%;
   min-height: 40px;
   font-size: 13px;
+}
+
+.share-link-text {
+  overflow-wrap: anywhere;
+  color: var(--sport-blue);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .spectator-root {

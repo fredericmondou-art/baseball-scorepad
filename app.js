@@ -2421,6 +2421,10 @@ function liveResultLabel(action) {
 function renderLiveBroadcastPanel(game) {
   const panel = $("#liveBroadcastPanel");
   if (!panel) return;
+  if (game.liveEnabled && (!game.publicGameId || !game.liveShareUrl)) {
+    ensureLiveShareFields(game);
+    updateCurrentGame(game);
+  }
   const liveState = game.liveEnabled ? (navigator.onLine ? "Live actif" : "Live en attente de connexion") : "Live inactif";
   const shareUrl = game.liveShareUrl || "";
   panel.innerHTML = `
@@ -2430,13 +2434,24 @@ function renderLiveBroadcastPanel(game) {
         <h3>Diffusion live</h3>
         <p>${game.liveEnabled ? "Lien public pour les parents." : "Publier le score et le play-by-play en direct."}</p>
       </div>
-      ${shareUrl ? `<input class="share-link-input" value="${escapeHtml(shareUrl)}" readonly>` : ""}
+      ${shareUrl ? `
+        <label class="share-link-label">URL parent spectateur
+          <input class="share-link-input" value="${escapeHtml(shareUrl)}" readonly onclick="this.select()">
+        </label>
+        <a class="share-link-text" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">${escapeHtml(shareUrl)}</a>
+      ` : ""}
       <div class="home-card-actions">
         <button class="primary-btn" onclick="enableLiveBroadcast()">${game.liveEnabled ? "Synchroniser" : "Activer diffusion live"}</button>
-        ${shareUrl ? `<button onclick="copyLiveShareLink()">Copier le lien</button><button onclick="openSpectatorLink()">Ouvrir mode spectateur</button>` : ""}
+        ${shareUrl ? `<button onclick="copyLiveShareLink()">Copier le lien</button><button onclick="openSpectatorLink()">Ouvrir comme spectateur</button>` : ""}
       </div>
     </div>
   `;
+}
+
+function ensureLiveShareFields(game) {
+  if (!game.publicGameId) game.publicGameId = generatePublicGameId();
+  game.liveShareUrl = `${window.location.origin}${window.location.pathname}?watch=${game.publicGameId}`;
+  return game.liveShareUrl;
 }
 
 function generatePublicGameId() {
@@ -2450,9 +2465,8 @@ function generatePublicGameId() {
 function enableLiveBroadcast() {
   const game = getCurrentGame();
   if (!game) return showToast("Aucune partie active.", "warning");
-  if (!game.publicGameId) game.publicGameId = generatePublicGameId();
   game.liveEnabled = true;
-  game.liveShareUrl = `${window.location.origin}${window.location.pathname}?watch=${game.publicGameId}`;
+  ensureLiveShareFields(game);
   updateCurrentGame(game);
   renderAll();
   syncLiveGameState(game);
@@ -2463,7 +2477,14 @@ function enableLiveBroadcast() {
 function copyLiveShareLink() {
   const game = getCurrentGame();
   if (!game?.liveShareUrl) return;
-  navigator.clipboard?.writeText(game.liveShareUrl);
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(game.liveShareUrl);
+    showToast("Lien live copié.", "success");
+    return;
+  }
+  const input = document.querySelector(".share-link-input");
+  input?.select();
+  document.execCommand("copy");
   showToast("Lien live copié.", "success");
 }
 
