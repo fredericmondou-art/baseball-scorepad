@@ -368,7 +368,7 @@ function normalizeGame(game) {
     innings,
     linkedGameId: game.linkedGameId || null,
     lineup: Array.isArray(game.lineup) ? game.lineup : [],
-    opponentLineup: Array.isArray(game.opponentLineup) ? game.opponentLineup : [],
+    opponentLineup: migrateOpponentPlayerLabels(game),
     atBats: normalizeAtBats(game.atBats),
     opponentAtBats: normalizeAtBats(game.opponentAtBats),
     playByPlay: Array.isArray(game.playByPlay) ? game.playByPlay : [],
@@ -417,6 +417,45 @@ function migrateRunLimitSettings(game) {
     runLimitPerInning: game.runLimitPerInning ? Number(game.runLimitPerInning) : null,
     runLimitAppliesToLastInning: game.runLimitAppliesToLastInning !== false
   };
+}
+
+function getOpponentTeamName(game = getCurrentGame()) {
+  return String(game?.opponent || game?.opponentName || game?.opponent_name || "Adversaire").trim() || "Adversaire";
+}
+
+function formatOpponentPlayerLabel(number, game = getCurrentGame()) {
+  const cleanNumber = String(number || "").replace(/^#/, "").trim() || "-";
+  return `#${cleanNumber}, ${getOpponentTeamName(game)}`;
+}
+
+function getOpponentPlayerNumber(batter) {
+  if (!batter) return "";
+  if (typeof batter === "string") {
+    return batter.match(/#?(\d{1,3})/)?.[1] || batter.replace(/^#/, "").trim();
+  }
+  return String(batter.number || batter.label?.match(/#?(\d{1,3})/)?.[1] || "").trim();
+}
+
+function createOpponentPlayer(number, game = getCurrentGame(), id = null) {
+  const cleanNumber = String(number || "").replace(/^#/, "").trim();
+  return {
+    id: id || createId("opp"),
+    number: cleanNumber,
+    teamName: getOpponentTeamName(game),
+    label: formatOpponentPlayerLabel(cleanNumber, game)
+  };
+}
+
+function migrateOpponentPlayerLabels(game) {
+  const lineup = Array.isArray(game?.opponentLineup) ? game.opponentLineup : [];
+  return lineup.map((batter) => {
+    const number = getOpponentPlayerNumber(batter);
+    const migrated = createOpponentPlayer(number, game, batter.id || createId("opp"));
+    return {
+      ...batter,
+      ...migrated
+    };
+  });
 }
 
 function normalizeAtBats(atBats) {
@@ -977,11 +1016,7 @@ function addOpponentBatter(event) {
   const number = $("#opponentBatterNumber").value.trim();
   if (!number) return showToast("Le numéro adverse est obligatoire.", "warning");
 
-  game.opponentLineup.push({
-    id: createId("opp"),
-    number,
-    label: `Adversaire #${number}`
-  });
+  game.opponentLineup.push(createOpponentPlayer(number, game));
   $("#opponentBatterNumber").value = "";
   updateCurrentGame(game);
   renderAll();
@@ -1076,7 +1111,7 @@ function renderOpponentLineup() {
     <div class="lineup-item opponent-item">
       <div class="lineup-rank">${index + 1}</div>
       <div>
-        <div class="player-main">${escapeHtml(opponentBatterName(batter))}</div>
+        <div class="player-main">${escapeHtml(opponentBatterName(batter, game))}</div>
         <div class="player-meta"><span class="mini-badge opponent-badge">Adversaire</span></div>
       </div>
       <button class="small-btn" onclick="removeOpponentBatter('${batter.id}')">Retirer</button>
@@ -1190,11 +1225,7 @@ function addOpponentBatterDuringGame() {
   if (!game) return;
   const number = $("#dynamicOpponentNumber").value.trim();
   if (!number) return showToast("Le numéro adverse est obligatoire.", "warning");
-  const batter = {
-    id: createId("opp"),
-    number,
-    label: `Adversaire #${number}`
-  };
+  const batter = createOpponentPlayer(number, game);
   setCurrentLineupBatter(game, "opponent", batter);
   updateCurrentGame(game);
   closeAddBatterModal();
@@ -1257,7 +1288,7 @@ function openBatterConfirmModal(side = getBattingSide(getCurrentGame()), actionT
   $("#expectedBatterPanel").classList.toggle("hidden", !showExpected);
   $("#teamBatterPanel").classList.toggle("hidden", showExpected || side === "opponent");
   $("#opponentBatterPanel").classList.toggle("hidden", showExpected || side !== "opponent");
-  $("#expectedBatterText").textContent = expected ? displayBatterName(expected, side) : "-";
+  $("#expectedBatterText").textContent = expected ? displayBatterName(expected, side, game) : "-";
   $("#batterSearchInput").value = "";
   renderExistingBatterOptions();
   $("#quickBatterNumber").value = "";
@@ -1366,12 +1397,12 @@ function addOpponentBatterToDynamicLineup(number) {
     lockOpponentLineup("repeat");
     game.currentOpponentBatterIndex = existingIndex;
   } else if (addBatterState.replace && game.opponentLineup.length) {
-    const batter = existingIndex >= 0 ? game.opponentLineup[existingIndex] : { id: createId("opp"), number, label: `Adversaire #${number}` };
+    const batter = existingIndex >= 0 ? game.opponentLineup[existingIndex] : createOpponentPlayer(number, game);
     game.opponentLineup[game.currentOpponentBatterIndex] = batter;
   } else if (existingIndex >= 0) {
     game.currentOpponentBatterIndex = existingIndex;
   } else {
-    const batter = { id: createId("opp"), number, label: `Adversaire #${number}` };
+    const batter = createOpponentPlayer(number, game);
     game.opponentLineup.push(batter);
     game.currentOpponentBatterIndex = game.opponentLineup.length - 1;
   }
@@ -1655,7 +1686,7 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
     inning: game.currentInning,
     half: game.half,
     battingSide: side,
-    batter: batter ? displayBatterName(batter, side) : runnerName(batterId, game),
+    batter: batter ? displayBatterName(batter, side, game) : runnerName(batterId, game),
     result: liveResultLabel(action),
     defensePlay: defensePlay?.code || "",
     runsScored,
@@ -2027,8 +2058,8 @@ function renderLive() {
     ["Retraits", `${game.outs} / 3`],
     ["Limite", runLimitDescription(game)],
     ["Points cette demi-manche", game.runLimitEnabled && game.runLimitPerInning ? `${getCurrentHalfInningRuns(game)} / ${game.runLimitPerInning}` : `${getCurrentHalfInningRuns(game)}`],
-    ["Frappeur actuel", batter ? displayBatterName(batter, battingSide) : "À confirmer"],
-    ["Prochain frappeur", next ? displayBatterName(next, battingSide) : "À confirmer"],
+    ["Frappeur actuel", batter ? displayBatterName(batter, battingSide, game) : "À confirmer"],
+    ["Prochain frappeur", next ? displayBatterName(next, battingSide, game) : "À confirmer"],
     ["Dernière action", lastAction],
     ["Statut", game.status]
   ]);
@@ -2370,7 +2401,7 @@ function buildLiveGameState(game) {
     // Si la colonne manque dans Supabase:
     // alter table public.live_games add column if not exists inning_scores jsonb default '{}'::jsonb;
     inning_scores: game.inningScores || [],
-    current_batter: currentBatter ? displayBatterName(currentBatter, side) : "",
+    current_batter: currentBatter ? displayBatterName(currentBatter, side, game) : "",
     batting_side: side,
     status: normalizeGameStatus(game.status),
     last_action: game.liveLastAction || getLastActionLabel(game),
@@ -2591,7 +2622,7 @@ function renderBases(game) {
   $("#baseThird").textContent = game ? runnerName(game.bases.third, game) : empty;
   const side = game ? getBattingSide(game) : "team";
   const batter = game ? getCurrentBatter(game) : null;
-  $("#currentBatterField").textContent = batter ? displayShortBatterName(batter, side) : "-";
+  $("#currentBatterField").textContent = batter ? displayShortBatterName(batter, side, game) : "-";
   $(".base-first").classList.toggle("occupied", Boolean(game?.bases.first));
   $(".base-second").classList.toggle("occupied", Boolean(game?.bases.second));
   $(".base-third").classList.toggle("occupied", Boolean(game?.bases.third));
@@ -2759,7 +2790,7 @@ function renderReport() {
     ${opponentComplete ? `
       <section class="report-section">
         <h3>Alignement adverse</h3>
-        <ol>${game.opponentLineup.map((batter) => `<li>${escapeHtml(opponentBatterName(batter))}</li>`).join("") || "<li>Aucun alignement adverse.</li>"}</ol>
+        <ol>${game.opponentLineup.map((batter) => `<li>${escapeHtml(opponentBatterName(batter, game))}</li>`).join("") || "<li>Aucun alignement adverse.</li>"}</ol>
       </section>
     ` : ""}
     ${renderAtBatsReportSection("Présences au bâton de notre équipe", game.atBats, "team", game)}
@@ -3197,8 +3228,8 @@ function renderSpectatorContent() {
   }
   container.innerHTML = `
     ${renderSpectatorAnimatedField(spectatorGameState)}
-    ${renderSpectatorPlayByPlay(spectatorPlayByPlay)}
     ${renderInningScoreboard(spectatorGameState)}
+    ${renderSpectatorPlayByPlay(spectatorPlayByPlay)}
   `;
 }
 
@@ -3521,17 +3552,17 @@ function shortPlayerName(player) {
   return `${initial}${player.lastName || player.firstName || `#${player.number}` || ""}`.trim();
 }
 
-function opponentBatterName(batter) {
+function opponentBatterName(batter, game = getGameForDisplay()) {
   if (!batter) return "Adversaire";
-  return batter.label || `Adversaire #${batter.number || "-"}`;
+  return formatOpponentPlayerLabel(getOpponentPlayerNumber(batter), game);
 }
 
-function displayBatterName(batter, side) {
-  return side === "opponent" ? opponentBatterName(batter) : formatPlayer(batter);
+function displayBatterName(batter, side, game = getGameForDisplay()) {
+  return side === "opponent" ? opponentBatterName(batter, game) : formatPlayer(batter);
 }
 
-function displayShortBatterName(batter, side) {
-  return side === "opponent" ? `#${batter.number || "-"}` : shortPlayerName(batter);
+function displayShortBatterName(batter, side, game = getGameForDisplay()) {
+  return side === "opponent" ? opponentBatterName(batter, game) : shortPlayerName(batter);
 }
 
 function runnerName(playerId, game = getCurrentGame()) {
@@ -3543,13 +3574,13 @@ function runnerName(playerId, game = getCurrentGame()) {
 
 function opponentRunnerName(playerId, game = getCurrentGame()) {
   const batter = findOpponentBatter(game, playerId);
-  return batter ? `#${batter.number || "-"}` : "Vide";
+  return batter ? opponentBatterName(batter, game) : "Vide";
 }
 
 function statPlayerName(playerId, side) {
   const game = getGameForDisplay();
   if (side === "opponent") {
-    return opponentBatterName(findOpponentBatter(game, playerId));
+    return opponentBatterName(findOpponentBatter(game, playerId), game);
   }
   const player = findPlayer(playerId);
   return player ? formatPlayer(player) : "Joueur supprimé";

@@ -1,4 +1,4 @@
-const CACHE_NAME = "baseball-scorepad-v13";
+const CACHE_NAME = "baseball-scorepad-v14";
 
 const APP_SHELL = [
   "./",
