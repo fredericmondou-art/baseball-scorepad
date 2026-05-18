@@ -22,22 +22,22 @@ const DEFENSIVE_OUT_TYPES = {
 };
 const FIELD_POINTS = {
   home: { x: 50, y: 82 },
-  "1B": { x: 72, y: 61 },
-  "2B": { x: 50, y: 39 },
-  "3B": { x: 28, y: 61 },
-  "1": { x: 50, y: 57 },
-  "2": { x: 50, y: 78 },
-  "3": { x: 72, y: 61 },
-  "4": { x: 59, y: 44 },
-  "5": { x: 28, y: 61 },
-  "6": { x: 41, y: 44 },
-  "7": { x: 20, y: 20 },
-  "8": { x: 50, y: 12 },
-  "9": { x: 80, y: 20 },
-  "outfield-left": { x: 23, y: 18 },
-  "outfield-center": { x: 50, y: 10 },
-  "outfield-right": { x: 77, y: 18 },
-  "outfield-deep": { x: 50, y: 4 }
+  "1B": { x: 72, y: 62 },
+  "2B": { x: 50, y: 42 },
+  "3B": { x: 28, y: 62 },
+  "1": { x: 50, y: 66 },
+  "2": { x: 50, y: 88 },
+  "3": { x: 76, y: 60 },
+  "4": { x: 58, y: 50 },
+  "5": { x: 24, y: 60 },
+  "6": { x: 42, y: 50 },
+  "7": { x: 25, y: 25 },
+  "8": { x: 50, y: 18 },
+  "9": { x: 75, y: 25 },
+  "outfield-left": { x: 28, y: 18 },
+  "outfield-center": { x: 50, y: 12 },
+  "outfield-right": { x: 72, y: 18 },
+  "outfield-deep": { x: 50, y: 5 }
 };
 
 let appData = {
@@ -2042,6 +2042,7 @@ function renderLive() {
   });
 
   $("#outsDots").innerHTML = renderOutDots(game.outs);
+  renderAnimatedField(game);
   renderBases(game);
   renderPlayByPlay(game);
 }
@@ -2177,7 +2178,7 @@ function createPlayByPlayEvent(game, actionInfo) {
   return event;
 }
 
-function buildPlayAnimation(actionInfo) {
+function buildPlayAnimation(actionInfo, game = null) {
   const result = String(actionInfo.result || "").toLowerCase();
   const code = actionInfo.defensePlay || "";
   if (code) {
@@ -2190,27 +2191,31 @@ function buildPlayAnimation(actionInfo) {
       ballPath: ["home", ...positions],
       runnerMovements: [],
       highlightPositions: positions.map(Number).filter(Boolean),
-      message: `${isDoublePlay ? "Double jeu" : "Retrait"} ${code}`
+      message: `${isDoublePlay ? "Double jeu" : "Retrait"} ${code}`,
+      duration: isDoublePlay ? 4200 : 3200
     };
   }
-  if (result.includes("simple")) return playAnimation("single", actionInfo, ["home", "outfield-right"], [{ from: "home", to: "1B" }], `Simple de ${actionInfo.batter}`);
-  if (result.includes("double")) return playAnimation("double", actionInfo, ["home", "outfield-center"], [{ from: "home", to: "2B" }], `Double de ${actionInfo.batter}`);
-  if (result.includes("triple")) return playAnimation("triple", actionInfo, ["home", "outfield-left"], [{ from: "home", to: "3B" }], `Triple de ${actionInfo.batter}`);
-  if (result.includes("circuit")) return playAnimation("homerun", actionInfo, ["home", "outfield-deep"], [{ from: "home", to: "home" }], "Circuit !");
-  if (result.includes("bb")) return playAnimation("walk", actionInfo, ["home", "1B"], [{ from: "home", to: "1B" }], "But sur balles");
-  if (result.includes("changement")) return playAnimation("half", actionInfo, ["home", "2B"], [], actionInfo.description || "Changement de demi-manche");
-  if (result.includes("fin")) return playAnimation("final", actionInfo, ["home", "outfield-center"], [], "Fin de partie");
-  return playAnimation("generic", actionInfo, ["home", "outfield-center"], [], actionInfo.description || actionInfo.result || "Action");
+  if (result.includes("simple")) return playAnimation("single", actionInfo, ["home", "outfield-right"], [{ runner: actionInfo.batter, from: "home", to: "1B" }], `Simple de ${actionInfo.batter}`, 3000);
+  if (result.includes("double")) return playAnimation("double", actionInfo, ["home", "outfield-center"], [{ runner: actionInfo.batter, from: "home", to: "2B" }], `Double de ${actionInfo.batter}`, 3200);
+  if (result.includes("triple")) return playAnimation("triple", actionInfo, ["home", "outfield-left"], [{ runner: actionInfo.batter, from: "home", to: "3B" }], `Triple de ${actionInfo.batter}`, 3400);
+  if (result.includes("circuit")) return playAnimation("homerun", actionInfo, ["home", "outfield-deep"], [{ runner: actionInfo.batter, from: "home", to: "home", via: ["1B", "2B", "3B"] }], "Circuit !", 4200);
+  if (result.includes("bb")) return playAnimation("walk", actionInfo, [], [{ runner: actionInfo.batter, from: "home", to: "1B" }], "But sur balles", 2600);
+  if (result.includes("erreur")) return playAnimation("error", actionInfo, ["home", "6"], [{ runner: actionInfo.batter, from: "home", to: "1B" }], actionInfo.description || "Erreur", 3000);
+  if (result.includes("sacrifice")) return playAnimation("sacrifice", actionInfo, ["home", "outfield-center"], [], actionInfo.description || "Sacrifice", 3000);
+  if (result.includes("changement")) return playAnimation("half", actionInfo, ["home", "2B"], [], actionInfo.description || "Changement de demi-manche", 2500);
+  if (result.includes("fin")) return playAnimation("final", actionInfo, ["home", "outfield-center"], [], "Fin de partie", 3200);
+  return playAnimation("generic", actionInfo, ["home", "outfield-center"], [], actionInfo.description || actionInfo.result || "Action", 2800);
 }
 
-function playAnimation(type, actionInfo, ballPath, runnerMovements, message) {
+function playAnimation(type, actionInfo, ballPath, runnerMovements, message, duration = 3000) {
   return {
     type,
     code: actionInfo.defensePlay || "",
     ballPath,
     runnerMovements,
     highlightPositions: [],
-    message
+    message,
+    duration
   };
 }
 
@@ -2239,38 +2244,108 @@ function renderPlayByPlayItem(event) {
 }
 
 function getFieldPointPosition(pointKey) {
-  return FIELD_POINTS[String(pointKey)] || FIELD_POINTS.home;
+  return FIELD_POINTS[String(pointKey)] || null;
+}
+
+function renderFieldPositions(highlightPositions = []) {
+  const highlights = new Set(highlightPositions.map(Number));
+  return DEFENSIVE_POSITIONS.map((position) => {
+    const point = getFieldPointPosition(String(position.number));
+    if (!point) return "";
+    return `
+      <span class="field-position-marker ${highlights.has(position.number) ? "active" : ""}" style="left:${point.x}%;top:${point.y}%">
+        <strong>${position.number}</strong><em>${position.abbr}</em>
+      </span>
+    `;
+  }).join("");
+}
+
+function renderAnimatedField(game) {
+  const layer = $("#fieldStaticLayer");
+  if (!layer) return;
+  layer.innerHTML = `
+    <div class="field-foul-line first-line"></div>
+    <div class="field-foul-line third-line"></div>
+    <div class="field-mound"><span></span></div>
+    <div class="home-plate-shape"></div>
+    <div class="batters-box left-box"></div>
+    <div class="batters-box right-box"></div>
+    <div class="base-path path-home-first"></div>
+    <div class="base-path path-first-second"></div>
+    <div class="base-path path-second-third"></div>
+    <div class="base-path path-third-home"></div>
+    <div class="field-positions-layer">${renderFieldPositions()}</div>
+  `;
 }
 
 function playGameAnimation(animation, layerSelector = "#fieldAnimationLayer") {
   const layer = document.querySelector(layerSelector);
   if (!layer || !animation) return;
-  const points = (animation.ballPath || ["home", "outfield-center"]).map(getFieldPointPosition);
-  const lines = points.slice(1).map((point, index) => renderAnimationLine(points[index], point)).join("");
-  const highlights = (animation.highlightPositions || []).map((position) => {
-    const point = getFieldPointPosition(String(position));
-    return `<span class="field-highlight" style="left:${point.x}%;top:${point.y}%">${position}</span>`;
-  }).join("");
-  const ball = points.map((point, index) => `<span class="animated-ball step-${index}" style="--x:${point.x}%;--y:${point.y}%;--delay:${index * 180}ms"></span>`).join("");
+  const path = animation.ballPath || [];
+  const points = path.map(getFieldPointPosition).filter(Boolean);
+  const lines = drawTrajectory(points);
+  const highlights = highlightFieldPositions(animation.highlightPositions || []);
+  const ball = animateBallPath(points, animation.type);
+  const runners = animateRunnerMovements(animation.runnerMovements || []);
   layer.innerHTML = `
-    <div class="animation-message">${escapeHtml(animation.message || "Action")}</div>
+    ${showActionOverlay(animation.message || "Action", animation.type)}
     ${lines}
     ${highlights}
     ${ball}
+    ${runners}
   `;
-  layer.classList.add("playing");
-  window.setTimeout(() => {
-    layer.classList.remove("playing");
+  layer.classList.add("playing", `animation-${animation.type || "generic"}`);
+  window.clearTimeout(layer._animationTimer);
+  layer._animationTimer = window.setTimeout(() => {
+    layer.className = "field-animation-layer";
     layer.innerHTML = "";
-  }, 3600);
+  }, Number(animation.duration || 3200));
 }
 
-function renderAnimationLine(start, end) {
+function animateBallPath(points, type = "generic") {
+  if (!points.length) return "";
+  return points.map((point, index) => `
+    <span class="animated-ball ${type}" style="--x:${point.x}%;--y:${point.y}%;--delay:${index * 220}ms"></span>
+  `).join("");
+}
+
+function drawTrajectory(points) {
+  return points.slice(1).map((point, index) => renderAnimationLine(points[index], point, index)).join("");
+}
+
+function highlightFieldPositions(positions) {
+  return positions.map((position) => {
+    const point = getFieldPointPosition(String(position));
+    if (!point) return "";
+    return `<span class="field-highlight" style="left:${point.x}%;top:${point.y}%">${position}</span>`;
+  }).join("");
+}
+
+function animateRunnerMovements(runnerMovements) {
+  return runnerMovements.map((movement, index) => {
+    const route = [movement.from, ...(movement.via || []), movement.to].map(getFieldPointPosition).filter(Boolean);
+    if (route.length < 2) return "";
+    return route.map((point, stepIndex) => `
+      <span class="animated-runner step-${stepIndex}" style="--x:${point.x}%;--y:${point.y}%;--delay:${(index * 120) + (stepIndex * 260)}ms">${escapeHtml(runnerToken(movement.runner))}</span>
+    `).join("") + (movement.to === "home" ? `<span class="run-plus-one" style="left:${route.at(-1).x}%;top:${route.at(-1).y}%">+1</span>` : "");
+  }).join("");
+}
+
+function runnerToken(runner) {
+  const number = String(runner || "").match(/#\d+/)?.[0];
+  return number || String(runner || "R").trim().charAt(0).toUpperCase() || "R";
+}
+
+function showActionOverlay(message, type = "generic") {
+  return `<div class="animation-message ${type}">${escapeHtml(message)}</div>`;
+}
+
+function renderAnimationLine(start, end, index = 0) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const length = Math.sqrt((dx * dx) + (dy * dy));
   const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-  return `<span class="field-path-line" style="left:${start.x}%;top:${start.y}%;width:${length}%;transform:rotate(${angle}deg)"></span>`;
+  return `<span class="field-path-line" style="left:${start.x}%;top:${start.y}%;width:${length}%;transform:rotate(${angle}deg);--delay:${index * 160}ms"></span>`;
 }
 
 function buildLiveGameState(game) {
@@ -3121,10 +3196,9 @@ function renderSpectatorContent() {
     return;
   }
   container.innerHTML = `
-    ${renderSpectatorScoreboard(spectatorGameState)}
-    ${renderInningScoreboard(spectatorGameState)}
     ${renderSpectatorAnimatedField(spectatorGameState)}
     ${renderSpectatorPlayByPlay(spectatorPlayByPlay)}
+    ${renderInningScoreboard(spectatorGameState)}
   `;
 }
 
@@ -3199,7 +3273,21 @@ function renderSpectatorAnimatedField(liveGame) {
       </div>
       <div class="spectator-diamond">
         <div class="infield"></div>
+        <div class="field-static-layer">
+          <div class="field-foul-line first-line"></div>
+          <div class="field-foul-line third-line"></div>
+          <div class="field-mound"><span></span></div>
+          <div class="home-plate-shape"></div>
+          <div class="batters-box left-box"></div>
+          <div class="batters-box right-box"></div>
+          <div class="base-path path-home-first"></div>
+          <div class="base-path path-first-second"></div>
+          <div class="base-path path-second-third"></div>
+          <div class="base-path path-third-home"></div>
+          <div class="field-positions-layer">${renderFieldPositions()}</div>
+        </div>
         <div id="spectatorAnimationLayer" class="field-animation-layer"></div>
+        ${renderEmbeddedMiniScoreboard(liveGame)}
         <div class="base base-second ${liveGame.bases?.second ? "occupied" : ""}"><strong>2B</strong><span>${escapeHtml(liveGame.bases?.second || "Vide")}</span></div>
         <div class="base base-third ${liveGame.bases?.third ? "occupied" : ""}"><strong>3B</strong><span>${escapeHtml(liveGame.bases?.third || "Vide")}</span></div>
         <div class="base base-first ${liveGame.bases?.first ? "occupied" : ""}"><strong>1B</strong><span>${escapeHtml(liveGame.bases?.first || "Vide")}</span></div>
@@ -3207,6 +3295,55 @@ function renderSpectatorAnimatedField(liveGame) {
       </div>
     </section>
   `;
+}
+
+function renderEmbeddedMiniScoreboard(liveGame) {
+  const team = liveGame.team_name || "Notre équipe";
+  const opponent = liveGame.opponent_name || "Adversaire";
+  const batter = liveGame.current_batter || "—";
+  const lastAction = liveGame.last_action || "Aucune action";
+  return `
+    <aside class="mini-broadcast-scoreboard" aria-label="Tableau de pointage compact">
+      <div class="mini-score-teams">
+        <span>${escapeHtml(getTeamShortName(team))}</span><strong>${liveGame.score_team ?? 0}</strong>
+        <span>${escapeHtml(getTeamShortName(opponent))}</span><strong>${liveGame.score_opponent ?? 0}</strong>
+      </div>
+      <div class="mini-score-state">
+        <span>${escapeHtml(liveGame.half || "—")} ${escapeHtml(String(liveGame.current_inning || "—"))}e</span>
+        ${renderCompactOutsIndicator(liveGame.outs || 0)}
+      </div>
+      ${renderCompactBaseDiamond(liveGame.bases || {})}
+      <div class="mini-score-detail">Batteur : ${escapeHtml(batter)}</div>
+      <div class="mini-score-last">Dernière : ${escapeHtml(shortenText(lastAction, 34))}</div>
+    </aside>
+  `;
+}
+
+function getTeamShortName(name) {
+  const clean = String(name || "—").trim();
+  if (!clean) return "—";
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return words.map((word) => word[0]).join("").slice(0, 3).toUpperCase();
+  return clean.slice(0, 3).toUpperCase();
+}
+
+function renderCompactBaseDiamond(bases = {}) {
+  return `
+    <div class="mini-bases" aria-label="Bases occupées">
+      <span class="mini-base second ${bases.second ? "occupied" : ""}"></span>
+      <span class="mini-base third ${bases.third ? "occupied" : ""}"></span>
+      <span class="mini-base first ${bases.first ? "occupied" : ""}"></span>
+    </div>
+  `;
+}
+
+function renderCompactOutsIndicator(outs = 0) {
+  return `<span class="mini-outs">${[0, 1, 2].map((index) => `<i class="${index < Number(outs) ? "active" : ""}"></i>`).join("")}</span>`;
+}
+
+function shortenText(value, maxLength = 34) {
+  const text = String(value || "");
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 function renderSpectatorPlayByPlay(events = []) {
