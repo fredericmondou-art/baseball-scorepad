@@ -77,7 +77,6 @@ function setupNavigation() {
 
 function showScreen(screenName) {
   if (screenName === "lineup" && !canOpenLineup()) return;
-  if (screenName === "live" && !canOpenMatch()) return;
   $$(".screen").forEach((screen) => screen.classList.remove("active"));
   const screen = $(`#screen-${screenName}`);
   if (screen) screen.classList.add("active");
@@ -102,10 +101,7 @@ function canOpenLineup() {
 }
 
 function canOpenMatch() {
-  if (getCurrentGame()) return true;
-  showToast("Aucune partie active. Créez une partie à partir du calendrier.", "warning");
-  openCalendar();
-  return false;
+  return true;
 }
 
 function openLineupForCurrentGame() {
@@ -117,12 +113,7 @@ function openMatchForCurrentGame() {
   const game = getCurrentGame();
   if (!game) {
     showToast("Aucune partie active. Créez une partie à partir du calendrier.", "warning");
-    showScreen("calendar");
-    return;
-  }
-  if (game.status !== "en cours" && game.status !== "terminée") {
-    showToast("Préparez l'alignement avant de démarrer le match.", "warning");
-    openLineupForCurrentGame();
+    showScreen("live");
     return;
   }
   showScreen("live");
@@ -400,6 +391,24 @@ function getGameForDisplay() {
   return getCurrentGame() || appData.games[appData.games.length - 1] || null;
 }
 
+function normalizeGameStatus(status) {
+  const value = String(status || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ");
+  if (["en cours", "started", "in progress", "in_progress"].includes(value)) return "in_progress";
+  if (["preparation", "brouillon", "draft", "partie creee"].includes(value)) return "preparation";
+  if (["terminee", "termine", "completed", "joue", "jouee"].includes(value)) return "completed";
+  if (["annule", "annulee", "cancelled", "canceled"].includes(value)) return "cancelled";
+  return value || "preparation";
+}
+
+function canOpenLiveMatch(game) {
+  return normalizeGameStatus(game?.status) === "in_progress";
+}
+
 function snapshotGame(game) {
   const copy = structuredCloneSafe(game);
   copy.history = [];
@@ -575,9 +584,9 @@ function saveCalendarEventFromForm(event) {
 
 function renderCalendar() {
   const events = getSortedCalendarEvents();
-  const upcoming = events.filter((event) => event.status === "À venir");
-  const played = events.filter((event) => event.status === "Joué");
-  const cancelled = events.filter((event) => event.status === "Annulé");
+  const upcoming = events.filter((event) => normalizeGameStatus(event.status) !== "completed" && normalizeGameStatus(event.status) !== "cancelled");
+  const played = events.filter((event) => normalizeGameStatus(event.status) === "completed");
+  const cancelled = events.filter((event) => normalizeGameStatus(event.status) === "cancelled");
   const next = upcoming[0];
 
   $("#calendarSummary").innerHTML = `
@@ -589,7 +598,7 @@ function renderCalendar() {
 
   $("#calendarCount").textContent = `${events.length} match${events.length > 1 ? "s" : ""}`;
   $("#calendarList").innerHTML = events.length ? events.map((event) => `
-    <div class="calendar-item ${event.status === "Joué" ? "played" : ""} ${event.status === "Annulé" ? "cancelled" : ""}">
+    <div class="calendar-item ${normalizeGameStatus(event.status) === "completed" ? "played" : ""} ${normalizeGameStatus(event.status) === "cancelled" ? "cancelled" : ""}">
       <div>
         <div class="player-main">${escapeHtml(formatDate(event.date))} ${escapeHtml(event.time || "")} · ${escapeHtml(event.opponent)}</div>
         <div class="player-meta">
@@ -618,7 +627,7 @@ function calendarEventActions(event) {
   if (!linkedGame) {
     return `<button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">Créer partie</button>`;
   }
-  if (linkedGame.status === "terminée") {
+  if (normalizeGameStatus(linkedGame.status) === "completed") {
     return `<button class="small-btn primary-btn" onclick="openReportForGame('${linkedGame.id}')">Voir rapport</button>`;
   }
   return `
@@ -733,6 +742,14 @@ function openLinkedGameMatch(gameId) {
 
 function openReportForGame(gameId) {
   appData.currentGameId = gameId;
+  saveData();
+  showScreen("report");
+}
+
+function openReportForCurrentGame() {
+  const game = getCurrentGame() || appData.games[appData.games.length - 1] || null;
+  if (!game) return showToast("Aucun rapport disponible.", "warning");
+  appData.currentGameId = game.id;
   saveData();
   showScreen("report");
 }
@@ -1848,14 +1865,14 @@ function ensureInningScore(game, inning) {
 
 function renderLive() {
   const game = getCurrentGame();
-  if (!game) {
-    $("#liveScoreboard").innerHTML = `<div class="empty-state">Aucune partie créée.</div>`;
-    $("#liveInfo").innerHTML = `<div class="empty-state">Créez une partie et un alignement pour afficher le match en direct.</div>`;
+  if (!game || !canOpenLiveMatch(game)) {
+    renderMatchScreen(game);
     $("#outsDots").innerHTML = renderOutDots(0);
     renderBases(null);
     return;
   }
 
+  renderMatchScreen(game);
   game.currentBattingSide = getBattingSide(game);
   const battingSide = game.currentBattingSide;
   const batter = getCurrentBatter(game);
@@ -1905,6 +1922,89 @@ function renderLive() {
 
   $("#outsDots").innerHTML = renderOutDots(game.outs);
   renderBases(game);
+}
+
+function renderMatchScreen(game = getCurrentGame()) {
+  const liveLayout = $("#liveLayout");
+  const stateContainer = $("#matchStateContainer");
+  if (!liveLayout || !stateContainer) return;
+
+  const status = normalizeGameStatus(game?.status);
+  if (game && status === "in_progress") {
+    liveLayout.classList.remove("hidden");
+    stateContainer.innerHTML = "";
+    return;
+  }
+
+  liveLayout.classList.add("hidden");
+  if (!game) {
+    stateContainer.innerHTML = renderNoActiveMatchState();
+  } else if (status === "completed") {
+    stateContainer.innerHTML = renderCompletedGameState(game);
+  } else {
+    stateContainer.innerHTML = renderGamePreparationState(game);
+  }
+}
+
+function renderNoActiveMatchState() {
+  return `
+    <div class="match-state-card">
+      <h2>Aucun match en cours</h2>
+      <p>Pour marquer une partie, créez d'abord un match à partir du calendrier, puis démarrez la partie.</p>
+      <div class="form-actions">
+        <button class="primary-btn" onclick="openCalendar()">Ouvrir le calendrier</button>
+        ${appData.games.some((game) => normalizeGameStatus(game.status) === "preparation") ? `<button onclick="openFirstPreparationGame()">Voir les parties en préparation</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function renderGamePreparationState(game) {
+  return `
+    <div class="match-state-card">
+      <h2>Partie en préparation</h2>
+      <p>Cette partie n'est pas encore démarrée. Préparez l'alignement ou démarrez le match.</p>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["Adversaire", game.opponent || "Adversaire"],
+          ["Date", formatDate(game.date)],
+          ["Statut", game.status || "préparation"]
+        ])}
+      </div>
+      <div class="form-actions">
+        <button onclick="openLineupForCurrentGame()">Préparer l'alignement</button>
+        <button class="primary-btn" onclick="startCurrentGame()">Démarrer le match</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderCompletedGameState(game) {
+  return `
+    <div class="match-state-card">
+      <h2>Partie terminée</h2>
+      <p>Cette partie est terminée. Vous pouvez consulter le rapport ou créer une nouvelle partie.</p>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["Adversaire", game.opponent || "Adversaire"],
+          ["Score final", `${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`],
+          ["Date", formatDate(game.date)]
+        ])}
+      </div>
+      <div class="form-actions">
+        <button class="primary-btn" onclick="openReportForCurrentGame()">Voir rapport</button>
+        <button onclick="openCalendar()">Ouvrir le calendrier</button>
+      </div>
+    </div>
+  `;
+}
+
+function openFirstPreparationGame() {
+  const game = appData.games.find((item) => normalizeGameStatus(item.status) === "preparation");
+  if (!game) return openCalendar();
+  appData.currentGameId = game.id;
+  saveData();
+  showScreen("live");
 }
 
 function lineupStatusLabel(game, side) {
@@ -2269,7 +2369,7 @@ function renderHeader() {
     : "Aucune partie";
 }
 
-function renderHome() {
+function renderHomeLegacy() {
   const game = getCurrentGame();
   if ($("#currentGameHomeText")) {
     $("#currentGameHomeText").textContent = game
@@ -2296,6 +2396,162 @@ function summaryRows(rows) {
       <strong>${escapeHtml(String(value))}</strong>
     </div>
   `).join("");
+}
+
+function renderHomeScreen() {
+  const record = calculateTeamRecord();
+  const upcoming = getUpcomingCalendarEvents(5);
+
+  $("#homeTopGrid").innerHTML = `
+    <article class="home-card dashboard-card">
+      <h3>Fiche de l'équipe</h3>
+      <div class="record-grid">
+        ${recordStat("Victoires", record.wins)}
+        ${recordStat("Défaites", record.losses)}
+        ${recordStat("Nuls", record.ties)}
+        ${recordStat("Matchs joués", record.gamesPlayed)}
+        ${recordStat("Pourcentage", record.winPercentage)}
+      </div>
+    </article>
+    ${getCurrentGameSummary()}
+    <article class="home-card dashboard-card">
+      <h3>Résumé rapide</h3>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["Joueurs", appData.team.players.length],
+          ["Parties sauvegardées", appData.games.length],
+          ["Matchs calendrier", appData.calendar.length]
+        ])}
+      </div>
+    </article>
+  `;
+
+  $("#homeUpcoming").innerHTML = `
+    <article class="home-card dashboard-card wide-dashboard-card">
+      <div class="card-title-row">
+        <h3>5 prochains matchs</h3>
+        <button class="small-btn primary-btn" onclick="openCalendar()">Ouvrir le calendrier</button>
+      </div>
+      <div class="upcoming-list">
+        ${upcoming.length ? upcoming.map(renderUpcomingEvent).join("") : `<div class="empty-state">Aucun match à venir. Ajoutez un match dans le calendrier.</div>`}
+      </div>
+    </article>
+  `;
+
+  $("#homeQuickActions").innerHTML = `
+    <button class="primary-btn" onclick="openCalendar()">Calendrier</button>
+    <button onclick="showScreen('players')">Joueurs</button>
+    <button onclick="showScreen('stats')">Stats</button>
+    <button onclick="openReportForCurrentGame()">Rapport</button>
+  `;
+}
+
+function renderHome() {
+  renderHomeScreen();
+}
+
+function recordStat(label, value) {
+  return `<div class="record-stat"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
+}
+
+function calculateTeamRecord() {
+  const completed = appData.games.filter((game) => normalizeGameStatus(game.status) === "completed");
+  const totals = completed.reduce((record, game) => {
+    const team = Number(game.scoreTeam || 0);
+    const opponent = Number(game.scoreOpponent || 0);
+    if (team > opponent) record.wins += 1;
+    else if (team < opponent) record.losses += 1;
+    else record.ties += 1;
+    return record;
+  }, { wins: 0, losses: 0, ties: 0 });
+  const gamesPlayed = totals.wins + totals.losses + totals.ties;
+  const decisions = totals.wins + totals.losses;
+  return {
+    ...totals,
+    gamesPlayed,
+    winPercentage: decisions ? formatWinningPercentage(totals.wins / decisions) : ".000"
+  };
+}
+
+function formatWinningPercentage(value) {
+  if (value >= 1) return "1.000";
+  return value.toFixed(3).replace(/^0/, "");
+}
+
+function getUpcomingCalendarEvents(limit = 5) {
+  const today = new Date().toISOString().slice(0, 10);
+  return getSortedCalendarEvents()
+    .filter((event) => {
+      const status = normalizeGameStatus(event.status);
+      return (event.date || "") >= today && status !== "cancelled" && status !== "completed";
+    })
+    .slice(0, limit);
+}
+
+function getCurrentGameSummary() {
+  const game = getCurrentGame();
+  if (game && normalizeGameStatus(game.status) !== "completed") {
+    const status = normalizeGameStatus(game.status);
+    const detail = status === "in_progress"
+      ? `Manche ${game.currentInning} ${game.half} · ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`
+      : `${formatDate(game.date)} · ${game.status}`;
+    const actions = status === "in_progress"
+      ? `<button class="primary-btn" onclick="showScreen('live')">Ouvrir le match</button>`
+      : `<button onclick="openLineupForCurrentGame()">Préparer l'alignement</button><button class="primary-btn" onclick="showScreen('live')">Voir l'état match</button>`;
+    return `
+      <article class="home-card dashboard-card">
+        <h3>Partie actuelle</h3>
+        <p>${escapeHtml(game.opponent || "Adversaire")}</p>
+        <p class="home-detail">${escapeHtml(detail)}</p>
+        <div class="home-card-actions">${actions}</div>
+      </article>
+    `;
+  }
+
+  const lastCompleted = [...appData.games].reverse().find((game) => normalizeGameStatus(game.status) === "completed");
+  if (lastCompleted) {
+    return `
+      <article class="home-card dashboard-card">
+        <h3>Dernière partie terminée</h3>
+        <p>${escapeHtml(appData.team.name)} ${lastCompleted.scoreTeam} - ${lastCompleted.scoreOpponent} ${escapeHtml(lastCompleted.opponent || "Adversaire")}</p>
+        <div class="home-card-actions">
+          <button class="primary-btn" onclick="openReportForGame('${lastCompleted.id}')">Voir rapport</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="home-card dashboard-card">
+      <h3>Partie actuelle</h3>
+      <p>Aucune partie active.</p>
+      <div class="home-card-actions">
+        <button class="primary-btn" onclick="openCalendar()">Aller au calendrier</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderUpcomingEvent(event) {
+  const linkedGame = event.linkedGameId ? appData.games.find((game) => game.id === event.linkedGameId) : null;
+  const action = !linkedGame
+    ? `<button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">Créer partie</button>`
+    : canOpenLiveMatch(linkedGame)
+      ? `<button class="small-btn primary-btn" onclick="openLinkedGameMatch('${linkedGame.id}')">Ouvrir match</button>`
+      : `<button class="small-btn secondary-btn" onclick="openLinkedGameLineup('${linkedGame.id}')">Préparer alignement</button>`;
+  return `
+    <div class="upcoming-item">
+      <div>
+        <strong>${escapeHtml(formatDate(event.date))}${event.time ? ` · ${escapeHtml(event.time)}` : ""} · ${escapeHtml(event.opponent || "Adversaire")}</strong>
+        <div class="player-meta">
+          <span class="mini-badge">${escapeHtml(event.homeAway || "local")}</span>
+          <span class="mini-badge">${escapeHtml(event.gameType || "Saison")}</span>
+          <span>${escapeHtml(event.field || "Terrain à confirmer")}</span>
+        </div>
+      </div>
+      <div class="row-actions">${action}</div>
+    </div>
+  `;
 }
 
 function findPlayer(playerId) {

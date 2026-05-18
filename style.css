@@ -194,6 +194,7 @@ tbody tr:nth-child(even) {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .status-pill,
@@ -209,6 +210,12 @@ tbody tr:nth-child(even) {
   font-size: 14px;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.header-status .status-pill {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
 }
 
 .status-neutral {
@@ -288,6 +295,15 @@ main {
   margin-bottom: 18px;
 }
 
+.compact-title {
+  margin-bottom: 12px;
+}
+
+#screen-home > .dashboard-hero,
+#screen-home > .home-grid {
+  display: none;
+}
+
 .section-title p,
 .home-card p,
 .dashboard-hero p {
@@ -356,6 +372,110 @@ main {
   align-content: space-between;
   gap: 20px;
   min-height: 180px;
+}
+
+.home-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dashboard-card {
+  min-height: auto;
+  align-content: start;
+  gap: 14px;
+}
+
+.record-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.record-stat {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.record-stat span,
+.home-detail {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.record-stat strong {
+  color: var(--ink);
+  font-size: 24px;
+}
+
+.compact-summary .summary-row {
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
+.compact-summary .summary-row span {
+  color: var(--muted);
+}
+
+.compact-summary .summary-row strong {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.home-upcoming {
+  margin-top: 14px;
+}
+
+.wide-dashboard-card {
+  gap: 14px;
+}
+
+.upcoming-list {
+  display: grid;
+  gap: 10px;
+}
+
+.upcoming-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.quick-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.match-state-card {
+  display: grid;
+  gap: 16px;
+  max-width: 760px;
+  margin: 28px auto;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.match-state-card h2,
+.match-state-card p {
+  margin: 0;
+}
+
+.match-state-card .form-actions {
+  justify-content: center;
 }
 
 .home-card-actions {
@@ -1383,11 +1503,13 @@ textarea {
   .app-header,
   .dashboard-hero,
   .home-grid,
+  .home-dashboard-grid,
   .live-layout,
   .two-column,
   .form-grid,
   .stats-summary,
   .calendar-item,
+  .upcoming-item,
   .defensive-modal-grid,
   .add-batter-grid {
     grid-template-columns: 1fr;
@@ -1399,6 +1521,10 @@ textarea {
 
   .home-card {
     min-height: 140px;
+  }
+
+  .quick-actions-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stats-table-card {

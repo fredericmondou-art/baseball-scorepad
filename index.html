@@ -104,6 +104,16 @@
           <button data-screen="settings">Régler</button>
         </article>
       </div>
+
+      <div class="section-title compact-title">
+        <div>
+          <p class="eyebrow">Tableau de bord</p>
+          <h2>Accueil</h2>
+        </div>
+      </div>
+      <div id="homeTopGrid" class="home-dashboard-grid"></div>
+      <div id="homeUpcoming" class="home-upcoming"></div>
+      <div id="homeQuickActions" class="quick-actions-grid"></div>
     </section>
 
     <section id="screen-players" class="screen">
@@ -386,7 +396,8 @@
     </section>
 
     <section id="screen-live" class="screen">
-      <div class="live-layout">
+      <div id="matchStateContainer"></div>
+      <div id="liveLayout" class="live-layout">
         <aside class="live-panel">
           <div class="scoreboard-card">
             <p class="eyebrow">Tableau de match</p>
