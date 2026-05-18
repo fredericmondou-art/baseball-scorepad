@@ -18,6 +18,11 @@
   --shadow: 0 16px 34px rgba(15, 31, 43, 0.12);
   --soft-shadow: 0 8px 20px rgba(15, 31, 43, 0.08);
   --radius: 8px;
+  --titans-green: #2F7D46;
+  --titans-green-dark: #1E5B33;
+  --titans-white: #FFFFFF;
+  --titans-silver: #D9DEE5;
+  --titans-charcoal: #22303C;
 }
 
 * {
@@ -524,23 +529,89 @@ main {
 
 .spectator-root {
   min-height: 100vh;
-  padding: 20px;
-  background: #f3f7fa;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(47, 125, 70, 0.18), transparent 32%),
+    linear-gradient(180deg, #f7faf8 0%, #edf3f0 100%);
 }
 
 .spectator-shell {
   display: grid;
-  gap: 16px;
-  max-width: 960px;
+  gap: 12px;
+  max-width: 980px;
   margin: 0 auto;
 }
 
+.spectator-brand-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(217, 222, 229, 0.9);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, var(--titans-green-dark), var(--titans-green));
+  color: var(--titans-white);
+  box-shadow: 0 14px 28px rgba(30, 91, 51, 0.22);
+}
+
+.spectator-brand-logo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 4px rgba(217, 222, 229, 0.18);
+}
+
+.spectator-brand-logo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 5px;
+  background: #fff;
+}
+
+.spectator-brand-logo span {
+  font-size: 1.55rem;
+  font-weight: 900;
+}
+
+.spectator-brand-copy {
+  min-width: 0;
+}
+
+.spectator-brand-copy .eyebrow {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.spectator-brand-copy h1 {
+  margin: 2px 0 3px;
+  color: #fff;
+  font-size: clamp(1.05rem, 4vw, 1.65rem);
+  line-height: 1.1;
+}
+
+.spectator-brand-copy p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .spectator-card {
-  padding: 20px;
+  padding: 14px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 14px;
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: 0 10px 24px rgba(34, 48, 60, 0.09);
 }
 
 .spectator-card h1,
@@ -556,7 +627,76 @@ main {
 
 .spectator-grid {
   display: grid;
-  gap: 16px;
+  gap: 12px;
+}
+
+.spectator-score-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(30, 91, 51, 0.16);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f4faf6 100%);
+  box-shadow: 0 12px 26px rgba(34, 48, 60, 0.1);
+}
+
+.mobile-score-teams {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-score-teams div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--titans-charcoal);
+  color: #fff;
+}
+
+.mobile-score-teams div:first-child {
+  background: linear-gradient(135deg, var(--titans-green-dark), var(--titans-green));
+}
+
+.mobile-score-teams span {
+  overflow: hidden;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-score-teams strong {
+  font-size: clamp(2.6rem, 15vw, 4.2rem);
+  line-height: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-score-meta span,
+.mobile-score-detail,
+.mobile-score-last {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #edf5f0;
+  color: var(--titans-charcoal);
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.mobile-score-last {
+  border-radius: 10px;
+  background: #fff8e8;
+  color: #5b3b08;
 }
 
 .spectator-score {
@@ -585,23 +725,24 @@ main {
 
 .spectator-feed {
   display: grid;
-  gap: 10px;
-  max-height: 420px;
+  gap: 8px;
+  max-height: 360px;
   overflow-y: auto;
 }
 
 .feed-item {
   display: grid;
   gap: 4px;
-  padding: 10px 0;
+  padding: 10px;
   border-bottom: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8faf9;
 }
 
 .feed-item.latest {
-  padding: 12px;
-  border: 2px solid rgba(217, 119, 6, 0.28);
-  border-radius: 8px;
-  background: #fff8ec;
+  border: 1px solid rgba(47, 125, 70, 0.32);
+  background: #eef8f1;
+  box-shadow: inset 4px 0 0 var(--titans-green);
 }
 
 .virtual-scoreboard {
@@ -743,7 +884,8 @@ main {
   width: 100%;
   height: auto;
   aspect-ratio: 1000 / 720;
-  min-height: 360px;
+  min-height: 300px;
+  max-height: 58vh;
 }
 
 .svg-defense-marker circle {
@@ -806,6 +948,11 @@ main {
   color: #fff;
   box-shadow: 0 16px 34px rgba(6, 18, 31, 0.28);
   backdrop-filter: blur(6px);
+}
+
+.mobile-mini-scoreboard {
+  border-color: rgba(217, 222, 229, 0.35);
+  background: rgba(34, 48, 60, 0.9);
 }
 
 .mini-score-teams {
@@ -896,6 +1043,42 @@ main {
   padding-top: 6px;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
   color: #fef3c7;
+}
+
+.spectator-inning-card {
+  overflow-x: auto;
+}
+
+.spectator-inning-card h2 {
+  color: var(--titans-charcoal);
+}
+
+.inning-scoreboard {
+  min-width: 520px;
+  border-collapse: collapse;
+}
+
+.inning-scoreboard th {
+  background: var(--titans-green-dark);
+  color: #fff;
+}
+
+.inning-scoreboard td,
+.inning-scoreboard th {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--titans-silver);
+  text-align: center;
+}
+
+.inning-scoreboard td:first-child,
+.inning-scoreboard th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  color: var(--titans-charcoal);
+  text-align: left;
+  font-weight: 900;
 }
 
 .home-card-actions {
@@ -2320,9 +2503,159 @@ textarea {
   }
 }
 
+@media (min-width: 721px) and (max-width: 1024px) {
+  .spectator-root {
+    padding: 16px;
+  }
+
+  .spectator-shell {
+    max-width: 900px;
+  }
+
+  .spectator-field-svg {
+    max-height: 54vh;
+  }
+
+  .spectator-score-card {
+    grid-template-columns: 1.2fr 1fr;
+    align-items: center;
+  }
+}
+
 @media (max-width: 720px) {
   body {
     font-size: 16px;
+  }
+
+  .spectator-root {
+    padding: 10px;
+  }
+
+  .spectator-shell,
+  .spectator-grid {
+    gap: 10px;
+  }
+
+  .spectator-brand-header {
+    gap: 10px;
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .spectator-brand-logo {
+    width: 50px;
+    height: 50px;
+  }
+
+  .spectator-brand-copy h1 {
+    font-size: 1rem;
+  }
+
+  .spectator-brand-copy p {
+    font-size: 0.82rem;
+  }
+
+  .spectator-card,
+  .spectator-score-card {
+    padding: 12px;
+    border-radius: 12px;
+  }
+
+  .mobile-score-teams {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mobile-score-teams div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .mobile-score-teams span {
+    font-size: 0.86rem;
+  }
+
+  .mobile-score-teams strong {
+    font-size: clamp(2.7rem, 18vw, 4rem);
+  }
+
+  .mobile-score-meta span,
+  .mobile-score-detail,
+  .mobile-score-last {
+    font-size: 0.82rem;
+  }
+
+  .spectator-field-card {
+    padding: 10px;
+  }
+
+  .spectator-field-card .card-title-row {
+    margin-bottom: 8px;
+  }
+
+  .spectator-svg-field-wrap {
+    border-radius: 12px;
+  }
+
+  .spectator-field-svg {
+    min-height: 250px;
+    max-height: 44vh;
+  }
+
+  .spectator-svg-field-wrap .field-animation-layer {
+    font-size: 0.82rem;
+  }
+
+  .mobile-mini-scoreboard {
+    right: 8px;
+    bottom: 8px;
+    width: min(172px, calc(100% - 16px));
+    grid-template-columns: 1fr auto;
+    gap: 5px 8px;
+    padding: 8px;
+    border-radius: 9px;
+  }
+
+  .mobile-mini-scoreboard .mini-score-teams span {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+
+  .mobile-mini-scoreboard .mini-score-teams strong {
+    font-size: 20px;
+  }
+
+  .mobile-mini-scoreboard .mini-score-detail {
+    display: none;
+  }
+
+  .mobile-mini-scoreboard .mini-score-state,
+  .mobile-mini-scoreboard .mini-score-last {
+    font-size: 10px;
+  }
+
+  .mobile-mini-scoreboard .mini-bases {
+    width: 42px;
+    height: 32px;
+  }
+
+  .mobile-mini-scoreboard .mini-base {
+    width: 13px;
+    height: 13px;
+  }
+
+  .spectator-feed {
+    max-height: 300px;
+  }
+
+  .feed-item {
+    padding: 9px;
+    font-size: 0.9rem;
+  }
+
+  .inning-scoreboard {
+    min-width: 440px;
+    font-size: 0.88rem;
   }
 
   main,

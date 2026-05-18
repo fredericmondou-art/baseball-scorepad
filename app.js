@@ -1,6 +1,18 @@
 const STORAGE_KEY = "baseballScorepadData";
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
+const TEAM_BRANDING = {
+  teamName: "Titans de la ChaudiÃ¨re-Ouest",
+  shortName: "TITANS",
+  logoPath: "assets/titans-logo.png",
+  colors: {
+    primary: "#2F7D46",
+    primaryDark: "#1E5B33",
+    white: "#FFFFFF",
+    silver: "#D9DEE5",
+    charcoal: "#22303C"
+  }
+};
 const POSITIONS = ["", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH", "SUB"];
 const DEFAULT_INNINGS = 7;
 const DEFENSIVE_POSITIONS = [
@@ -3255,22 +3267,45 @@ function renderUpcomingEvent(event) {
 }
 
 function renderSpectatorMode(publicGameId) {
+  applyTeamBranding();
   document.querySelector(".app-header")?.classList.add("hidden");
   document.querySelector("main")?.classList.add("hidden");
   const root = $("#spectatorRoot");
   root.classList.remove("hidden");
   root.innerHTML = `
     <div class="spectator-shell">
-      <div class="spectator-card">
-        <p class="eyebrow">Baseball ScorePad</p>
-        <h1>Match en direct</h1>
-        <p id="spectatorConnection">Connexion au live...</p>
-      </div>
+      ${renderSpectatorMobileHeader()}
       <div id="spectatorContent" class="spectator-grid"></div>
     </div>
   `;
   loadSpectatorGame(publicGameId);
   subscribeSpectatorGame(publicGameId);
+}
+
+function applyTeamBranding() {
+  const root = document.documentElement;
+  const colors = TEAM_BRANDING.colors || {};
+  root.style.setProperty("--titans-green", colors.primary || "#2F7D46");
+  root.style.setProperty("--titans-green-dark", colors.primaryDark || "#1E5B33");
+  root.style.setProperty("--titans-white", colors.white || "#FFFFFF");
+  root.style.setProperty("--titans-silver", colors.silver || "#D9DEE5");
+  root.style.setProperty("--titans-charcoal", colors.charcoal || "#22303C");
+}
+
+function renderSpectatorMobileHeader() {
+  return `
+    <header class="spectator-brand-header">
+      <div class="spectator-brand-logo">
+        <img src="${escapeHtml(TEAM_BRANDING.logoPath)}" alt="Logo ${escapeHtml(TEAM_BRANDING.teamName)}" onerror="this.classList.add('hidden')">
+        <span>${escapeHtml(TEAM_BRANDING.shortName.charAt(0))}</span>
+      </div>
+      <div class="spectator-brand-copy">
+        <p class="eyebrow">${escapeHtml(TEAM_BRANDING.shortName)}</p>
+        <h1>${escapeHtml(TEAM_BRANDING.teamName)} - Match en direct</h1>
+        <p id="spectatorConnection">Connexion au live...</p>
+      </div>
+    </header>
+  `;
 }
 
 async function loadSpectatorGame(publicGameId) {
@@ -3363,10 +3398,40 @@ function renderSpectatorContent() {
     return;
   }
   container.innerHTML = `
+    ${renderMobileSpectatorScoreCard(spectatorGameState)}
     ${renderSpectatorAnimatedField(spectatorGameState)}
-    ${renderInningScoreboard(spectatorGameState)}
     ${renderSpectatorPlayByPlay(spectatorPlayByPlay)}
+    ${renderMobileInningScoreboard(spectatorGameState)}
   `;
+}
+
+function renderMobileSpectatorScoreCard(liveGame) {
+  const team = TEAM_BRANDING.shortName || liveGame.team_name || "Notre Ã©quipe";
+  const opponent = liveGame.opponent_name || "Adversaire";
+  return `
+    <section class="spectator-score-card" aria-label="Score principal">
+      <div class="mobile-score-teams">
+        <div>
+          <span>${escapeHtml(getTeamShortName(team))}</span>
+          <strong>${liveGame.score_team ?? 0}</strong>
+        </div>
+        <div>
+          <span>${escapeHtml(getTeamShortName(opponent))}</span>
+          <strong>${liveGame.score_opponent ?? 0}</strong>
+        </div>
+      </div>
+      <div class="mobile-score-meta">
+        <span>${escapeHtml(liveGame.half || "—")} ${escapeHtml(String(liveGame.current_inning || "—"))}e manche</span>
+        <span>${escapeHtml(String(liveGame.outs ?? 0))} retrait${Number(liveGame.outs || 0) > 1 ? "s" : ""}</span>
+      </div>
+      <div class="mobile-score-detail">Batteur : ${escapeHtml(liveGame.current_batter || "—")}</div>
+      <div class="mobile-score-last">DerniÃ¨re : ${escapeHtml(shortenText(liveGame.last_action || "Aucune action rÃ©cente", 58))}</div>
+    </section>
+  `;
+}
+
+function renderMobileInningScoreboard(liveGame) {
+  return renderInningScoreboard(liveGame).replace("spectator-card table-wrap", "spectator-card table-wrap spectator-inning-card");
 }
 
 function renderSpectatorScoreboard(liveGame) {
@@ -3454,7 +3519,7 @@ function renderSpectatorAnimatedField(liveGame) {
           <div class="field-positions-layer">${renderFieldPositions()}</div>
         </div>
         <div id="spectatorAnimationLayer" class="field-animation-layer"></div>
-        ${renderEmbeddedMiniScoreboard(liveGame)}
+        ${renderEmbeddedMiniScoreboard(liveGame, { mobile: true })}
         <div class="base base-second ${liveGame.bases?.second ? "occupied" : ""}"><strong>2B</strong><span>${escapeHtml(liveGame.bases?.second || "Vide")}</span></div>
         <div class="base base-third ${liveGame.bases?.third ? "occupied" : ""}"><strong>3B</strong><span>${escapeHtml(liveGame.bases?.third || "Vide")}</span></div>
         <div class="base base-first ${liveGame.bases?.first ? "occupied" : ""}"><strong>1B</strong><span>${escapeHtml(liveGame.bases?.first || "Vide")}</span></div>
@@ -3474,7 +3539,7 @@ function renderSpectatorAnimatedField(liveGame) {
       <div class="spectator-svg-field-wrap">
         ${renderSpectatorFieldSvg(liveGame)}
         <div id="spectatorAnimationLayer" class="field-animation-layer"></div>
-        ${renderEmbeddedMiniScoreboard(liveGame)}
+        ${renderEmbeddedMiniScoreboard(liveGame, { mobile: true })}
       </div>
     </section>
   `;
@@ -3587,13 +3652,14 @@ function getRunnerNumber(baseValue) {
   return number || text.slice(0, 3).toUpperCase();
 }
 
-function renderEmbeddedMiniScoreboard(liveGame) {
+function renderEmbeddedMiniScoreboard(liveGame, options = {}) {
   const team = liveGame.team_name || "Notre équipe";
   const opponent = liveGame.opponent_name || "Adversaire";
   const batter = liveGame.current_batter || "—";
   const lastAction = liveGame.last_action || "Aucune action";
+  const compactClass = options.mobile ? " mobile-mini-scoreboard" : "";
   return `
-    <aside class="mini-broadcast-scoreboard" aria-label="Tableau de pointage compact">
+    <aside class="mini-broadcast-scoreboard${compactClass}" aria-label="Tableau de pointage compact">
       <div class="mini-score-teams">
         <span>${escapeHtml(getTeamShortName(team))}</span><strong>${liveGame.score_team ?? 0}</strong>
         <span>${escapeHtml(getTeamShortName(opponent))}</span><strong>${liveGame.score_opponent ?? 0}</strong>
