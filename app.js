@@ -1,4 +1,6 @@
 const STORAGE_KEY = "baseballScorepadData";
+const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
 const POSITIONS = ["", "P", "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH", "SUB"];
 const DEFAULT_INNINGS = 7;
 const DEFENSIVE_POSITIONS = [
@@ -39,6 +41,16 @@ let addBatterState = {
   replace: false
 };
 let pendingAction = null;
+let supabaseClient = null;
+let spectatorMode = false;
+let spectatorGameState = null;
+let spectatorPlayByPlay = [];
+let spectatorSubscriptions = [];
+
+// Pour un usage public à grande échelle, sécuriser les écritures avec authentification, code marqueur ou Edge Function.
+if (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY) {
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -46,6 +58,13 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 document.addEventListener("DOMContentLoaded", initApp);
 
 function initApp() {
+  const watchId = new URLSearchParams(window.location.search).get("watch");
+  if (watchId) {
+    spectatorMode = true;
+    renderSpectatorMode(watchId);
+    return;
+  }
+
   loadData();
   setupNavigation();
   setupForms();
@@ -191,7 +210,14 @@ function setupSegmentedGameForm() {
 }
 
 function setupOfflineStatus() {
-  window.addEventListener("online", updateOfflineStatus);
+  window.addEventListener("online", () => {
+    updateOfflineStatus();
+    const game = getCurrentGame();
+    if (game) {
+      syncPendingLiveEvents(game);
+      syncLiveGameState(game);
+    }
+  });
   window.addEventListener("offline", updateOfflineStatus);
   updateOfflineStatus();
 }
@@ -348,6 +374,11 @@ function normalizeGame(game) {
     runLimitEnabled: migratedRunLimit.runLimitEnabled,
     runLimitPerInning: migratedRunLimit.runLimitPerInning,
     runLimitAppliesToLastInning: migratedRunLimit.runLimitAppliesToLastInning,
+    liveEnabled: game.liveEnabled === true,
+    publicGameId: game.publicGameId || null,
+    liveShareUrl: game.liveShareUrl || null,
+    liveLastAction: game.liveLastAction || "",
+    pendingLiveEvents: Array.isArray(game.pendingLiveEvents) ? game.pendingLiveEvents : [],
     history: Array.isArray(game.history) ? game.history : [],
     status: game.status || "préparation"
   };
@@ -883,6 +914,11 @@ function buildGame({ date, time = "", opponent, field, gameType = "", notes = ""
     runLimitEnabled,
     runLimitPerInning,
     runLimitAppliesToLastInning,
+    liveEnabled: false,
+    publicGameId: null,
+    liveShareUrl: null,
+    liveLastAction: "",
+    pendingLiveEvents: [],
     history: [],
     status
   });
@@ -962,6 +998,7 @@ function startCurrentGame() {
   game.bases = { first: null, second: null, third: null };
   game.currentBattingSide = getBattingSide(game);
   updateCurrentGame(game);
+  syncLiveGameState(game);
   showScreen("live");
   showToast(game.lineupMode === "dynamic" ? "Partie démarrée. L'alignement sera construit pendant la partie." : "Partie démarrée.", "success");
 }
@@ -1592,9 +1629,24 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
   }
 
   atBat.rbi = runsScored;
+  const batter = side === "opponent" ? findOpponentBatter(game, batterId) : findPlayer(batterId);
+  const actionInfo = {
+    inning: game.currentInning,
+    half: game.half,
+    battingSide: side,
+    batter: batter ? displayBatterName(batter, side) : runnerName(batterId, game),
+    result: liveResultLabel(action),
+    defensePlay: defensePlay?.code || "",
+    runsScored,
+    createdAt: new Date().toISOString()
+  };
+  actionInfo.description = buildPlayByPlayDescription(actionInfo);
+  game.liveLastAction = actionInfo.description;
   getAtBatList(game, side).push(atBat);
   advanceBatterIndex(game, side);
   updateCurrentGame(game);
+  syncLiveGameState(game);
+  publishPlayByPlayEvent(game, actionInfo);
   renderAll();
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
 
@@ -1798,7 +1850,16 @@ function endHalfInning(shouldSnapshot) {
     ensureInningScore(game, game.currentInning);
   }
   game.currentBattingSide = getBattingSide(game);
+  game.liveLastAction = `Changement de demi-manche : ${game.half} ${game.currentInning}e`;
   updateCurrentGame(game);
+  syncLiveGameState(game);
+  publishPlayByPlayEvent(game, {
+    inning: game.currentInning,
+    half: game.half,
+    battingSide: game.currentBattingSide,
+    result: "Changement de demi-manche",
+    description: game.liveLastAction
+  });
   renderAll();
   showToast("Demi-manche changée.", "info");
 }
@@ -1815,7 +1876,21 @@ function adjustOpponentScore(delta) {
   }
   inning.opponent = Math.max(0, inning.opponent + delta);
   game.scoreOpponent = game.inningScores.reduce((total, row) => total + (row.opponent || 0), 0);
+  if (delta > 0) {
+    game.liveLastAction = `${game.opponent || "Adversaire"} : ${delta} point${delta > 1 ? "s" : ""} ajouté${delta > 1 ? "s" : ""}`;
+  }
   updateCurrentGame(game);
+  syncLiveGameState(game);
+  if (delta > 0) {
+    publishPlayByPlayEvent(game, {
+      inning: game.currentInning,
+      half: game.half,
+      battingSide: "opponent",
+      result: "Point adverse",
+      runsScored: delta,
+      description: game.liveLastAction
+    });
+  }
   renderAll();
   showToast("Score adverse ajusté.", "info");
   if (delta > 0 && game.runLimitEnabled && game.runLimitPerInning && !(game.runLimitAppliesToLastInning === false && game.currentInning >= game.innings)) {
@@ -1837,7 +1912,16 @@ function finishGame() {
   game.status = "terminée";
   const calendarEvent = appData.calendar.find((event) => event.linkedGameId === game.id || event.id === game.linkedGameId);
   if (calendarEvent) calendarEvent.status = "Joué";
+  game.liveLastAction = `Fin de partie : ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`;
   updateCurrentGame(game);
+  syncLiveGameState(game);
+  publishPlayByPlayEvent(game, {
+    inning: game.currentInning,
+    half: game.half,
+    battingSide: game.currentBattingSide,
+    result: "Fin de partie",
+    description: game.liveLastAction
+  });
   saveData();
   renderAll();
   showToast("Partie terminée.", "success");
@@ -1882,6 +1966,7 @@ function renderLive() {
   const modeLabel = game.opponentTrackingMode === "complete" ? "Mode complet" : "Mode simplifié";
   const lineupStatus = lineupStatusLabel(game, battingSide);
   const addedBatters = battingSide === "team" ? game.lineup.length : game.opponentLineup.length;
+  renderLiveBroadcastPanel(game);
 
   $("#liveScoreboard").innerHTML = `
     <div class="scoreboard">
@@ -1937,6 +2022,7 @@ function renderMatchScreen(game = getCurrentGame()) {
   }
 
   liveLayout.classList.add("hidden");
+  if ($("#liveBroadcastPanel")) $("#liveBroadcastPanel").innerHTML = "";
   if (!game) {
     stateContainer.innerHTML = renderNoActiveMatchState();
   } else if (status === "completed") {
@@ -2034,6 +2120,179 @@ function getLastActionLabel(game) {
   if (!last) return "-";
   if (last.defensePlay?.code) return `Retrait ${last.defensePlay.code}`;
   return last.result || "-";
+}
+
+function buildLiveGameState(game) {
+  const side = getBattingSide(game);
+  const currentBatter = getCurrentBatter(game);
+  return {
+    public_game_id: game.publicGameId,
+    home_team: game.homeAway === "local" ? appData.team.name : (game.opponent || "Adversaire"),
+    away_team: game.homeAway === "visiteur" ? appData.team.name : (game.opponent || "Adversaire"),
+    team_name: appData.team.name,
+    opponent_name: game.opponent || "Adversaire",
+    score_team: game.scoreTeam || 0,
+    score_opponent: game.scoreOpponent || 0,
+    current_inning: game.currentInning || 1,
+    half: game.half || "haut",
+    outs: game.outs || 0,
+    bases: {
+      first: liveBaseName(game.bases?.first, game),
+      second: liveBaseName(game.bases?.second, game),
+      third: liveBaseName(game.bases?.third, game)
+    },
+    current_batter: currentBatter ? displayBatterName(currentBatter, side) : "",
+    batting_side: side,
+    status: normalizeGameStatus(game.status),
+    last_action: game.liveLastAction || getLastActionLabel(game),
+    updated_at: new Date().toISOString()
+  };
+}
+
+function liveBaseName(playerId, game) {
+  if (!playerId) return null;
+  const name = runnerName(playerId, game);
+  return name === "Vide" ? null : name;
+}
+
+async function syncLiveGameState(game) {
+  if (!supabaseClient || !game?.liveEnabled || !game.publicGameId || !navigator.onLine) return false;
+  try {
+    const { error } = await supabaseClient
+      .from("live_games")
+      .upsert(buildLiveGameState(game), { onConflict: "public_game_id" });
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.warn("Live game sync failed", error);
+    return false;
+  }
+}
+
+async function publishPlayByPlayEvent(game, actionInfo) {
+  if (!game?.liveEnabled || !game.publicGameId) return false;
+  const event = {
+    public_game_id: game.publicGameId,
+    inning: actionInfo.inning || game.currentInning,
+    half: actionInfo.half || game.half,
+    batting_side: actionInfo.battingSide || getBattingSide(game),
+    batter: actionInfo.batter || "",
+    result: actionInfo.result || "",
+    defense_play: actionInfo.defensePlay || "",
+    runs_scored: Number(actionInfo.runsScored || 0),
+    description: actionInfo.description || "",
+    created_at: actionInfo.createdAt || new Date().toISOString()
+  };
+
+  if (!supabaseClient || !navigator.onLine) {
+    queuePendingLiveEvent(game, event);
+    return false;
+  }
+
+  try {
+    const { error } = await supabaseClient.from("play_by_play").insert(event);
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    console.warn("Play-by-play publish failed", error);
+    queuePendingLiveEvent(game, event);
+    return false;
+  }
+}
+
+function queuePendingLiveEvent(game, event) {
+  game.pendingLiveEvents = Array.isArray(game.pendingLiveEvents) ? game.pendingLiveEvents : [];
+  game.pendingLiveEvents.push(event);
+  updateCurrentGame(game);
+}
+
+async function syncPendingLiveEvents(game) {
+  if (!supabaseClient || !game?.liveEnabled || !game.publicGameId || !navigator.onLine || !game.pendingLiveEvents?.length) return false;
+  const pending = [...game.pendingLiveEvents];
+  try {
+    const { error } = await supabaseClient.from("play_by_play").insert(pending);
+    if (error) throw error;
+    game.pendingLiveEvents = [];
+    updateCurrentGame(game);
+    showToast("Événements live synchronisés.", "success");
+    return true;
+  } catch (error) {
+    console.warn("Pending live sync failed", error);
+    return false;
+  }
+}
+
+function buildPlayByPlayDescription(actionInfo) {
+  const runs = actionInfo.runsScored > 0 ? `, ${actionInfo.runsScored} point${actionInfo.runsScored > 1 ? "s" : ""} marqué${actionInfo.runsScored > 1 ? "s" : ""}` : "";
+  return `${actionInfo.batter} : ${actionInfo.result}${actionInfo.defensePlay ? ` ${actionInfo.defensePlay}` : ""}${runs}`;
+}
+
+function liveResultLabel(action) {
+  return {
+    single: "Simple",
+    double: "Double",
+    triple: "Triple",
+    hr: "Circuit",
+    bb: "BB",
+    out: "Retrait",
+    error: "Erreur",
+    sacrifice: "Sacrifice"
+  }[action] || action;
+}
+
+function renderLiveBroadcastPanel(game) {
+  const panel = $("#liveBroadcastPanel");
+  if (!panel) return;
+  const liveState = game.liveEnabled ? (navigator.onLine ? "Live actif" : "Live en attente de connexion") : "Live inactif";
+  const shareUrl = game.liveShareUrl || "";
+  panel.innerHTML = `
+    <div class="live-broadcast-card ${game.liveEnabled ? "active" : ""}">
+      <div>
+        <span class="mini-badge">${escapeHtml(liveState)}</span>
+        <h3>Diffusion live</h3>
+        <p>${game.liveEnabled ? "Lien public pour les parents." : "Publier le score et le play-by-play en direct."}</p>
+      </div>
+      ${shareUrl ? `<input class="share-link-input" value="${escapeHtml(shareUrl)}" readonly>` : ""}
+      <div class="home-card-actions">
+        <button class="primary-btn" onclick="enableLiveBroadcast()">${game.liveEnabled ? "Synchroniser" : "Activer diffusion live"}</button>
+        ${shareUrl ? `<button onclick="copyLiveShareLink()">Copier le lien</button><button onclick="openSpectatorLink()">Ouvrir mode spectateur</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function generatePublicGameId() {
+  let code = "";
+  do {
+    code = Math.random().toString(36).slice(2, 8).toUpperCase();
+  } while (appData.games.some((game) => game.publicGameId === code));
+  return code;
+}
+
+function enableLiveBroadcast() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie active.", "warning");
+  if (!game.publicGameId) game.publicGameId = generatePublicGameId();
+  game.liveEnabled = true;
+  game.liveShareUrl = `${window.location.origin}${window.location.pathname}?watch=${game.publicGameId}`;
+  updateCurrentGame(game);
+  renderAll();
+  syncLiveGameState(game);
+  syncPendingLiveEvents(game);
+  showToast("Diffusion live activée.", "success");
+}
+
+function copyLiveShareLink() {
+  const game = getCurrentGame();
+  if (!game?.liveShareUrl) return;
+  navigator.clipboard?.writeText(game.liveShareUrl);
+  showToast("Lien live copié.", "success");
+}
+
+function openSpectatorLink() {
+  const game = getCurrentGame();
+  if (!game?.liveShareUrl) return;
+  window.open(game.liveShareUrl, "_blank");
 }
 
 function gameCards(rows) {
@@ -2552,6 +2811,114 @@ function renderUpcomingEvent(event) {
       <div class="row-actions">${action}</div>
     </div>
   `;
+}
+
+function renderSpectatorMode(publicGameId) {
+  document.querySelector(".app-header")?.classList.add("hidden");
+  document.querySelector("main")?.classList.add("hidden");
+  const root = $("#spectatorRoot");
+  root.classList.remove("hidden");
+  root.innerHTML = `
+    <div class="spectator-shell">
+      <div class="spectator-card">
+        <p class="eyebrow">Baseball ScorePad</p>
+        <h1>Match en direct</h1>
+        <p id="spectatorConnection">Connexion au live...</p>
+      </div>
+      <div id="spectatorContent" class="spectator-grid"></div>
+    </div>
+  `;
+  loadSpectatorGame(publicGameId);
+  subscribeSpectatorGame(publicGameId);
+}
+
+async function loadSpectatorGame(publicGameId) {
+  if (!supabaseClient) {
+    $("#spectatorConnection").textContent = "Supabase n'est pas disponible.";
+    return;
+  }
+  try {
+    const [{ data: game, error: gameError }, { data: events, error: eventsError }] = await Promise.all([
+      supabaseClient.from("live_games").select("*").eq("public_game_id", publicGameId).maybeSingle(),
+      supabaseClient.from("play_by_play").select("*").eq("public_game_id", publicGameId).order("created_at", { ascending: false }).limit(50)
+    ]);
+    if (gameError) throw gameError;
+    if (eventsError) throw eventsError;
+    spectatorGameState = game;
+    spectatorPlayByPlay = events || [];
+    $("#spectatorConnection").textContent = game ? "Connecté au live" : "Aucun match live trouvé.";
+    renderSpectatorContent();
+  } catch (error) {
+    console.warn("Spectator load failed", error);
+    $("#spectatorConnection").textContent = "Impossible de charger le match live.";
+  }
+}
+
+function subscribeSpectatorGame(publicGameId) {
+  if (!supabaseClient) return;
+  spectatorSubscriptions.forEach((channel) => supabaseClient.removeChannel(channel));
+  spectatorSubscriptions = [
+    supabaseClient.channel(`live-game-${publicGameId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "live_games", filter: `public_game_id=eq.${publicGameId}` }, (payload) => {
+        spectatorGameState = payload.new;
+        $("#spectatorConnection").textContent = "Mis à jour en direct";
+        renderSpectatorContent();
+      })
+      .subscribe(),
+    supabaseClient.channel(`play-by-play-${publicGameId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "play_by_play", filter: `public_game_id=eq.${publicGameId}` }, (payload) => {
+        spectatorPlayByPlay = [payload.new, ...spectatorPlayByPlay].slice(0, 50);
+        renderSpectatorContent();
+      })
+      .subscribe()
+  ];
+}
+
+function renderSpectatorContent() {
+  const container = $("#spectatorContent");
+  if (!container) return;
+  if (!spectatorGameState) {
+    container.innerHTML = `<div class="spectator-card"><p>Aucune donnée live pour le moment.</p></div>`;
+    return;
+  }
+  const bases = spectatorGameState.bases || {};
+  container.innerHTML = `
+    <section class="spectator-card spectator-score">
+      <div><span>${escapeHtml(spectatorGameState.team_name || "Notre équipe")}</span><strong>${spectatorGameState.score_team || 0}</strong></div>
+      <div><span>${escapeHtml(spectatorGameState.opponent_name || "Adversaire")}</span><strong>${spectatorGameState.score_opponent || 0}</strong></div>
+    </section>
+    <section class="spectator-card">
+      <h2>Situation</h2>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["Manche", `${spectatorGameState.current_inning || 1} - ${spectatorGameState.half || "-"}`],
+          ["Retraits", spectatorGameState.outs || 0],
+          ["Frappeur", spectatorGameState.current_batter || "-"],
+          ["Coureurs", spectatorBasesText(bases)]
+        ])}
+      </div>
+      <h3>Dernière action</h3>
+      <p>${escapeHtml(spectatorGameState.last_action || "-")}</p>
+    </section>
+    <section class="spectator-card spectator-feed">
+      <h2>Play-by-play</h2>
+      ${spectatorPlayByPlay.length ? spectatorPlayByPlay.map((event) => `
+        <div class="feed-item">
+          <strong>${escapeHtml(event.half || "")} ${escapeHtml(String(event.inning || ""))}e</strong>
+          <span>${escapeHtml(event.description || event.result || "-")}</span>
+        </div>
+      `).join("") : `<p>Aucun événement publié.</p>`}
+    </section>
+  `;
+}
+
+function spectatorBasesText(bases) {
+  const occupied = [
+    bases.first && "1B",
+    bases.second && "2B",
+    bases.third && "3B"
+  ].filter(Boolean);
+  return occupied.length ? occupied.join(" et ") : "Aucun";
 }
 
 function findPlayer(playerId) {
