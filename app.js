@@ -53,6 +53,7 @@ function initApp() {
   setupAddBatterModal();
   setupSegmentedGameForm();
   renderRunLimitSettings();
+  renderCalendarRunLimitSettings();
   renderLineupModeSettings();
   setupOfflineStatus();
   registerServiceWorker();
@@ -68,13 +69,14 @@ function setupNavigation() {
   });
 
   $("#continueGameBtn").addEventListener("click", () => {
-    const game = getCurrentGame();
-    if (!game) return showToast("Aucune partie en cours.");
-    showScreen(game.lineup.length >= 9 ? "live" : "lineup");
+    openMatchForCurrentGame();
   });
+  $("#homeLineupBtn").addEventListener("click", openLineupForCurrentGame);
 }
 
 function showScreen(screenName) {
+  if (screenName === "lineup" && !canOpenLineup()) return;
+  if (screenName === "live" && !canOpenMatch()) return;
   $$(".screen").forEach((screen) => screen.classList.remove("active"));
   const screen = $(`#screen-${screenName}`);
   if (screen) screen.classList.add("active");
@@ -84,6 +86,45 @@ function showScreen(screenName) {
   });
 
   renderAll();
+}
+
+function openCalendar(message) {
+  if (message) showToast(message, "info");
+  showScreen("calendar");
+}
+
+function canOpenLineup() {
+  if (getCurrentGame()) return true;
+  showToast("Créez d'abord une partie à partir du calendrier.", "warning");
+  openCalendar();
+  return false;
+}
+
+function canOpenMatch() {
+  if (getCurrentGame()) return true;
+  showToast("Aucune partie active. Créez une partie à partir du calendrier.", "warning");
+  openCalendar();
+  return false;
+}
+
+function openLineupForCurrentGame() {
+  if (!canOpenLineup()) return;
+  showScreen("lineup");
+}
+
+function openMatchForCurrentGame() {
+  const game = getCurrentGame();
+  if (!game) {
+    showToast("Aucune partie active. Créez une partie à partir du calendrier.", "warning");
+    showScreen("calendar");
+    return;
+  }
+  if (game.status !== "en cours" && game.status !== "terminée") {
+    showToast("Préparez l'alignement avant de démarrer le match.", "warning");
+    openLineupForCurrentGame();
+    return;
+  }
+  showScreen("live");
 }
 
 function setupForms() {
@@ -106,6 +147,7 @@ function setupForms() {
   $("#exportDataBtn").addEventListener("click", exportData);
   $("#importDataInput").addEventListener("change", importData);
   $("#runLimitEnabled").addEventListener("change", renderRunLimitSettings);
+  $("#calendarRunLimitEnabled").addEventListener("change", renderCalendarRunLimitSettings);
   $("#opponentTrackingMode").addEventListener("change", renderLineupModeSettings);
 }
 
@@ -253,6 +295,13 @@ function migrateData() {
     field: event.field || "",
     homeAway: event.homeAway || "local",
     gameType: event.gameType || "Saison",
+    innings: Number(event.innings || DEFAULT_INNINGS),
+    opponentTrackingMode: event.opponentTrackingMode || "simple",
+    lineupMode: event.lineupMode === "dynamic" ? "dynamic" : "prepared",
+    opponentLineupMode: event.opponentLineupMode === "prepared" ? "prepared" : "dynamic",
+    runLimitEnabled: event.runLimitEnabled === true,
+    runLimitPerInning: event.runLimitPerInning ? Number(event.runLimitPerInning) : null,
+    runLimitAppliesToLastInning: event.runLimitAppliesToLastInning !== false,
     notes: event.notes || "",
     status: event.status || "À venir",
     linkedGameId: event.linkedGameId || null
@@ -270,6 +319,9 @@ function normalizeGame(game) {
     date: game.date || "",
     opponent: game.opponent || "",
     field: game.field || "",
+    time: game.time || "",
+    gameType: game.gameType || "",
+    notes: game.notes || "",
     homeAway: game.homeAway || "local",
     innings,
     linkedGameId: game.linkedGameId || null,
@@ -471,11 +523,21 @@ function saveCalendarEventFromForm(event) {
     homeAway: $("#calendarHomeAway").value,
     gameType: $("#calendarGameType").value,
     status: $("#calendarStatus").value,
+    innings: Math.max(1, Number($("#calendarInnings").value || DEFAULT_INNINGS)),
+    opponentTrackingMode: $("#calendarOpponentTrackingMode").value,
+    lineupMode: $("#calendarLineupMode").value,
+    opponentLineupMode: $("#calendarOpponentLineupMode").value,
+    runLimitEnabled: $("#calendarRunLimitEnabled").checked,
+    runLimitPerInning: $("#calendarRunLimitEnabled").checked ? Number($("#calendarRunLimitPerInning").value || 5) : null,
+    runLimitAppliesToLastInning: !$("#calendarRunLimitSkipLast").checked,
     notes: $("#calendarNotes").value.trim()
   };
 
   if (!payload.date || !payload.opponent) {
     return showToast("La date et l'adversaire sont obligatoires.", "warning");
+  }
+  if (payload.runLimitEnabled && (!payload.runLimitPerInning || payload.runLimitPerInning < 1 || payload.runLimitPerInning > 20)) {
+    return showToast("La limite doit être entre 1 et 20 points.", "warning");
   }
 
   if (editingId) {
@@ -529,7 +591,7 @@ function renderCalendar() {
       <div class="row-actions">
         <button class="small-btn secondary-btn" onclick="editCalendarEvent('${event.id}')">Modifier</button>
         <button class="small-btn danger-btn" onclick="deleteCalendarEvent('${event.id}')">Supprimer</button>
-        <button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">${event.linkedGameId ? "Ouvrir partie" : "Créer partie"}</button>
+        ${calendarEventActions(event)}
       </div>
     </div>
   `).join("") : `<div class="empty-state">Aucun match prévu. Ajoutez le premier événement du calendrier.</div>`;
@@ -537,6 +599,20 @@ function renderCalendar() {
 
 function getSortedCalendarEvents() {
   return [...appData.calendar].sort((a, b) => `${a.date || "9999"} ${a.time || ""}`.localeCompare(`${b.date || "9999"} ${b.time || ""}`));
+}
+
+function calendarEventActions(event) {
+  const linkedGame = event.linkedGameId ? appData.games.find((game) => game.id === event.linkedGameId) : null;
+  if (!linkedGame) {
+    return `<button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">Créer partie</button>`;
+  }
+  if (linkedGame.status === "terminée") {
+    return `<button class="small-btn primary-btn" onclick="openReportForGame('${linkedGame.id}')">Voir rapport</button>`;
+  }
+  return `
+    <button class="small-btn secondary-btn" onclick="openLinkedGameLineup('${linkedGame.id}')">Préparer alignement</button>
+    <button class="small-btn primary-btn" onclick="openLinkedGameMatch('${linkedGame.id}')">Ouvrir match</button>
+  `;
 }
 
 function editCalendarEvent(eventId) {
@@ -550,6 +626,14 @@ function editCalendarEvent(eventId) {
   $("#calendarHomeAway").value = event.homeAway || "local";
   $("#calendarGameType").value = event.gameType || "Saison";
   $("#calendarStatus").value = event.status || "À venir";
+  $("#calendarInnings").value = event.innings || DEFAULT_INNINGS;
+  $("#calendarOpponentTrackingMode").value = event.opponentTrackingMode || "simple";
+  $("#calendarLineupMode").value = event.lineupMode || "prepared";
+  $("#calendarOpponentLineupMode").value = event.opponentLineupMode || "dynamic";
+  $("#calendarRunLimitEnabled").checked = event.runLimitEnabled === true;
+  $("#calendarRunLimitPerInning").value = event.runLimitPerInning || 5;
+  $("#calendarRunLimitSkipLast").checked = event.runLimitEnabled === true && event.runLimitAppliesToLastInning === false;
+  renderCalendarRunLimitSettings();
   $("#calendarNotes").value = event.notes || "";
   $("#calendarFormTitle").textContent = "Modifier un match prévu";
   $("#calendarSubmitBtn").textContent = "Sauvegarder les modifications";
@@ -563,6 +647,14 @@ function resetCalendarForm() {
   $("#calendarHomeAway").value = "local";
   $("#calendarGameType").value = "Saison";
   $("#calendarStatus").value = "À venir";
+  $("#calendarInnings").value = DEFAULT_INNINGS;
+  $("#calendarOpponentTrackingMode").value = "simple";
+  $("#calendarLineupMode").value = "prepared";
+  $("#calendarOpponentLineupMode").value = "dynamic";
+  $("#calendarRunLimitEnabled").checked = false;
+  $("#calendarRunLimitPerInning").value = 5;
+  $("#calendarRunLimitSkipLast").checked = false;
+  renderCalendarRunLimitSettings();
   $("#calendarFormTitle").textContent = "Ajouter un match prévu";
   $("#calendarSubmitBtn").textContent = "Ajouter au calendrier";
   $("#cancelCalendarEditBtn").classList.add("hidden");
@@ -589,26 +681,48 @@ function createGameFromCalendarEvent(eventId) {
 
   const game = buildGame({
     date: event.date,
+    time: event.time,
     opponent: event.opponent,
     field: event.field,
+    gameType: event.gameType,
+    notes: event.notes,
     homeAway: event.homeAway,
-    innings: DEFAULT_INNINGS,
+    innings: event.innings || DEFAULT_INNINGS,
     linkedGameId: event.id,
-    opponentTrackingMode: "simple",
-    lineupMode: "prepared",
-    opponentLineupMode: "dynamic",
-    runLimitEnabled: false,
-    runLimitPerInning: null,
-    runLimitAppliesToLastInning: true,
+    opponentTrackingMode: event.opponentTrackingMode || "simple",
+    lineupMode: event.lineupMode || "prepared",
+    opponentLineupMode: event.opponentLineupMode || "dynamic",
+    runLimitEnabled: event.runLimitEnabled === true,
+    runLimitPerInning: event.runLimitEnabled ? event.runLimitPerInning : null,
+    runLimitAppliesToLastInning: event.runLimitAppliesToLastInning !== false,
     status: "brouillon"
   });
 
   appData.games.push(game);
   appData.currentGameId = game.id;
   event.linkedGameId = game.id;
+  event.status = "Partie créée";
   saveData();
-  showScreen("lineup");
+  openLineupForCurrentGame();
   showToast("Partie créée depuis le calendrier.", "success");
+}
+
+function openLinkedGameLineup(gameId) {
+  appData.currentGameId = gameId;
+  saveData();
+  openLineupForCurrentGame();
+}
+
+function openLinkedGameMatch(gameId) {
+  appData.currentGameId = gameId;
+  saveData();
+  openMatchForCurrentGame();
+}
+
+function openReportForGame(gameId) {
+  appData.currentGameId = gameId;
+  saveData();
+  showScreen("report");
 }
 
 function setDefaultGameDate() {
@@ -621,6 +735,14 @@ function renderRunLimitSettings() {
   $("#runLimitPerInning").disabled = !enabled;
   $("#runLimitPerInning").required = enabled;
   $("#runLimitValueWrap").classList.toggle("muted-card", !enabled);
+}
+
+function renderCalendarRunLimitSettings() {
+  const enabled = $("#calendarRunLimitEnabled")?.checked || false;
+  if (!$("#calendarRunLimitPerInning")) return;
+  $("#calendarRunLimitPerInning").disabled = !enabled;
+  $("#calendarRunLimitPerInning").required = enabled;
+  $("#calendarRunLimitValueWrap").classList.toggle("muted-card", !enabled);
 }
 
 function renderLineupModeSettings() {
@@ -694,12 +816,15 @@ function createGame(event) {
   showToast("Partie créée.", "success");
 }
 
-function buildGame({ date, opponent, field, homeAway, innings, opponentTrackingMode, lineupMode = "prepared", opponentLineupMode = "dynamic", runLimitEnabled = false, runLimitPerInning = null, runLimitAppliesToLastInning = true, status, linkedGameId }) {
+function buildGame({ date, time = "", opponent, field, gameType = "", notes = "", homeAway, innings, opponentTrackingMode, lineupMode = "prepared", opponentLineupMode = "dynamic", runLimitEnabled = false, runLimitPerInning = null, runLimitAppliesToLastInning = true, status, linkedGameId }) {
   return normalizeGame({
     id: createId("game"),
     date,
+    time,
     opponent,
     field,
+    gameType,
+    notes,
     homeAway,
     innings,
     linkedGameId,
@@ -1883,6 +2008,15 @@ function renderHeader() {
 
 function renderHome() {
   const game = getCurrentGame();
+  if ($("#currentGameHomeText")) {
+    $("#currentGameHomeText").textContent = game
+      ? `${game.opponent || "Adversaire"} · ${game.date || "-"} · ${game.status}`
+      : "Aucune partie active. Allez au calendrier pour créer une partie.";
+  }
+  if ($("#homeLineupBtn")) $("#homeLineupBtn").disabled = !game;
+  if ($("#continueGameBtn")) {
+    $("#continueGameBtn").textContent = game ? "Ouvrir le match" : "Aller au calendrier";
+  }
   $("#homeSummary").innerHTML = summaryRows([
     ["Équipe", appData.team.name],
     ["Joueurs", appData.team.players.length],

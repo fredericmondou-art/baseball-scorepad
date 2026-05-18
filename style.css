@@ -358,6 +358,12 @@ main {
   min-height: 180px;
 }
 
+.home-card-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .primary-card {
   background: linear-gradient(135deg, #ffffff, #ecf7f1);
   border-color: rgba(17, 114, 72, 0.32);
@@ -1407,6 +1413,7 @@ textarea {
   .form-row,
   .score-summary,
   .game-cards,
+  .home-card-actions,
   .action-grid,
   .management-grid,
   .report-grid,
