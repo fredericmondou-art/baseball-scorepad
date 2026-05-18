@@ -1333,6 +1333,13 @@ textarea {
   margin: 0;
 }
 
+.batter-expected-text {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: var(--ink);
+}
+
 #toast {
   position: fixed;
   left: 50%;

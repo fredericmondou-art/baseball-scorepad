@@ -38,6 +38,7 @@ let addBatterState = {
   side: "team",
   replace: false
 };
+let pendingAction = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -139,6 +140,8 @@ function setupForms() {
   $("#undoBtn").addEventListener("click", undoLastAction);
   $("#endHalfBtn").addEventListener("click", () => endHalfInning(true));
   $("#changeBatterBtn").addEventListener("click", () => replaceCurrentBatter());
+  $("#lockTeamLineupBtn").addEventListener("click", lockTeamLineupManually);
+  $("#lockOpponentLineupBtn").addEventListener("click", lockOpponentLineupManually);
   $("#finishGameBtn").addEventListener("click", finishGame);
   $("#oppPlusBtn").addEventListener("click", () => adjustOpponentScore(1));
   $("#oppMinusBtn").addEventListener("click", () => adjustOpponentScore(-1));
@@ -155,10 +158,10 @@ function setupLiveActions() {
   $$(".action-grid [data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.dataset.action === "out") {
-        openDefensiveOutModal();
+        confirmBatterBeforeAction("defensiveOut");
         return;
       }
-      recordAtBat(button.dataset.action);
+      confirmBatterBeforeAction(button.dataset.action);
     });
   });
 }
@@ -177,9 +180,12 @@ function setupDefensiveOutModal() {
 function setupAddBatterModal() {
   $("#cancelAddBatterBtn").addEventListener("click", closeAddBatterModal);
   $("#cancelAddBatterTopBtn").addEventListener("click", closeAddBatterModal);
-  $("#useExistingBatterBtn").addEventListener("click", addTeamBatterDuringGame);
-  $("#quickAddTeamBatterBtn").addEventListener("click", addTeamBatterDuringGame);
-  $("#addOpponentDuringGameBtn").addEventListener("click", addOpponentBatterDuringGame);
+  $("#confirmExpectedBatterBtn").addEventListener("click", executePendingActionForConfirmedBatter);
+  $("#changeExpectedBatterBtn").addEventListener("click", () => openBatterConfirmModal(addBatterState.side, pendingAction?.actionType, true));
+  $("#useExistingBatterBtn").addEventListener("click", confirmTeamBatterSelection);
+  $("#quickAddTeamBatterBtn").addEventListener("click", confirmTeamBatterSelection);
+  $("#addOpponentDuringGameBtn").addEventListener("click", confirmOpponentBatterNumber);
+  $("#batterSearchInput").addEventListener("input", renderExistingBatterOptions);
 }
 
 function setupSegmentedGameForm() {
@@ -342,6 +348,12 @@ function normalizeGame(game) {
     opponentTrackingMode: game.opponentTrackingMode || "simple",
     lineupMode: migratedLineupModes.lineupMode,
     opponentLineupMode: migratedLineupModes.opponentLineupMode,
+    teamLineupLocked: typeof game.teamLineupLocked === "boolean" ? game.teamLineupLocked : (Array.isArray(game.lineup) && game.lineup.length >= 9),
+    opponentLineupLocked: typeof game.opponentLineupLocked === "boolean" ? game.opponentLineupLocked : (Array.isArray(game.opponentLineup) && game.opponentLineup.length >= 9),
+    teamLineupLockReason: game.teamLineupLockReason || null,
+    opponentLineupLockReason: game.opponentLineupLockReason || null,
+    teamLineupBuildCompleteByRepeat: game.teamLineupBuildCompleteByRepeat !== false,
+    opponentLineupBuildCompleteByRepeat: game.opponentLineupBuildCompleteByRepeat !== false,
     runLimitEnabled: migratedRunLimit.runLimitEnabled,
     runLimitPerInning: migratedRunLimit.runLimitPerInning,
     runLimitAppliesToLastInning: migratedRunLimit.runLimitAppliesToLastInning,
@@ -845,6 +857,12 @@ function buildGame({ date, time = "", opponent, field, gameType = "", notes = ""
     opponentTrackingMode,
     lineupMode,
     opponentLineupMode,
+    teamLineupLocked: lineupMode === "prepared",
+    opponentLineupLocked: opponentLineupMode === "prepared",
+    teamLineupLockReason: lineupMode === "prepared" ? "prepared" : null,
+    opponentLineupLockReason: opponentLineupMode === "prepared" ? "prepared" : null,
+    teamLineupBuildCompleteByRepeat: true,
+    opponentLineupBuildCompleteByRepeat: true,
     runLimitEnabled,
     runLimitPerInning,
     runLimitAppliesToLastInning,
@@ -1001,9 +1019,11 @@ function getBattingSide(game) {
 function getCurrentBatter(game) {
   const side = getBattingSide(game);
   if (side === "opponent") {
+    if (game.opponentLineupMode === "dynamic" && !game.opponentLineupLocked && game.currentOpponentBatterIndex >= game.opponentLineup.length) return null;
     if (game.currentOpponentBatterIndex >= game.opponentLineup.length) game.currentOpponentBatterIndex = 0;
     return game.opponentLineup[game.currentOpponentBatterIndex] || null;
   }
+  if (game.lineupMode === "dynamic" && !game.teamLineupLocked && game.currentBatterIndex >= game.lineup.length) return null;
   if (game.currentBatterIndex >= game.lineup.length) game.currentBatterIndex = 0;
   return findPlayer(game.lineup[game.currentBatterIndex]) || null;
 }
@@ -1011,9 +1031,11 @@ function getCurrentBatter(game) {
 function getNextBatter(game) {
   const side = getBattingSide(game);
   if (side === "opponent") {
+    if (game.opponentLineupMode === "dynamic" && !game.opponentLineupLocked) return null;
     if (!game.opponentLineup.length) return null;
     return game.opponentLineup[(game.currentOpponentBatterIndex + 1) % game.opponentLineup.length];
   }
+  if (game.lineupMode === "dynamic" && !game.teamLineupLocked) return null;
   if (!game.lineup.length) return null;
   return findPlayer(game.lineup[(game.currentBatterIndex + 1) % game.lineup.length]) || null;
 }
@@ -1029,9 +1051,12 @@ function ensureCurrentBatter(game) {
 
 function openAddBatterModal(side = getBattingSide(getCurrentGame()), replace = false) {
   addBatterState = { side, replace };
+  $("#addBatterTitle").textContent = side === "opponent" ? "Confirmer le frappeur adverse" : "Confirmer le frappeur de notre équipe";
   $("#addBatterSideLabel").textContent = side === "opponent" ? "Adversaire au bâton" : "Notre équipe au bâton";
+  $("#expectedBatterPanel").classList.add("hidden");
   $("#teamBatterPanel").classList.toggle("hidden", side === "opponent");
   $("#opponentBatterPanel").classList.toggle("hidden", side !== "opponent");
+  $("#batterSearchInput").value = "";
   renderExistingBatterOptions();
   $("#quickBatterNumber").value = "";
   $("#quickBatterFirstName").value = "";
@@ -1042,13 +1067,14 @@ function openAddBatterModal(side = getBattingSide(getCurrentGame()), replace = f
 }
 
 function closeAddBatterModal() {
+  pendingAction = null;
   $("#addBatterModal").classList.add("hidden");
 }
 
 function renderExistingBatterOptions() {
   const game = getCurrentGame();
   const currentIds = new Set(game?.lineup || []);
-  const players = appData.team.players.filter((player) => player.active !== false);
+  const players = findTeamPlayerBySearch($("#batterSearchInput")?.value || "");
   $("#existingBatterSelect").innerHTML = players.length ? players.map((player) => (
     `<option value="${player.id}">${escapeHtml(formatPlayer(player))}${currentIds.has(player.id) ? " (déjà dans l'ordre)" : ""}</option>`
   )).join("") : `<option value="">Aucun joueur disponible</option>`;
@@ -1131,9 +1157,220 @@ function replaceCurrentBatter(side = null) {
   openAddBatterModal(side || getBattingSide(game), true);
 }
 
-function openDefensiveOutModal() {
+function confirmBatterBeforeAction(actionType, defensePlay = null) {
   const game = getCurrentGame();
-  if (game && !ensureCurrentBatter(game)) return;
+  if (!game || game.status === "terminée") return showToast("Aucune partie active.", "warning");
+  const side = getBattingSide(game);
+  pendingAction = { actionType, defensePlay };
+  if (side === "opponent" && game.opponentTrackingMode === "simple") {
+    executePendingActionForConfirmedBatter();
+    return true;
+  }
+  openBatterConfirmModal(side, actionType);
+  return false;
+}
+
+function openBatterConfirmModal(side = getBattingSide(getCurrentGame()), actionType = pendingAction?.actionType, forceChoose = false) {
+  const game = getCurrentGame();
+  if (!game) return;
+  addBatterState = { side, replace: forceChoose };
+  const locked = side === "opponent" ? game.opponentLineupLocked : game.teamLineupLocked;
+  const expected = getExpectedBatter(game, side);
+  const showExpected = !forceChoose && locked && expected;
+  $("#addBatterTitle").textContent = side === "opponent" ? "Confirmer le frappeur adverse" : "Confirmer le frappeur de notre équipe";
+  $("#addBatterSideLabel").textContent = side === "opponent" ? "Adversaire au bâton" : "Notre équipe au bâton";
+  $("#expectedBatterPanel").classList.toggle("hidden", !showExpected);
+  $("#teamBatterPanel").classList.toggle("hidden", showExpected || side === "opponent");
+  $("#opponentBatterPanel").classList.toggle("hidden", showExpected || side !== "opponent");
+  $("#expectedBatterText").textContent = expected ? displayBatterName(expected, side) : "-";
+  $("#batterSearchInput").value = "";
+  renderExistingBatterOptions();
+  $("#quickBatterNumber").value = "";
+  $("#quickBatterFirstName").value = "";
+  $("#quickBatterLastName").value = "";
+  $("#quickBatterPosition").value = "";
+  $("#dynamicOpponentNumber").value = "";
+  $("#addBatterModal").classList.remove("hidden");
+}
+
+function executePendingActionForConfirmedBatter() {
+  const action = pendingAction;
+  pendingAction = null;
+  closeAddBatterModal();
+  if (!action) return;
+  if (action.actionType === "defensiveOut") {
+    openDefensiveOutModal(true);
+    return;
+  }
+  recordAtBat(action.actionType, action.defensePlay || null, true);
+}
+
+function confirmTeamBatterSelection(event) {
+  const fromQuickAdd = event?.target?.id === "quickAddTeamBatterBtn";
+  let playerId = $("#existingBatterSelect").value;
+  if (fromQuickAdd) {
+    const number = $("#quickBatterNumber").value.trim();
+    const firstName = $("#quickBatterFirstName").value.trim();
+    const lastName = $("#quickBatterLastName").value.trim();
+    if (!number && !firstName && !lastName) return showToast("Entrez au moins un numéro ou un nom.", "warning");
+    const existingQuickPlayer = appData.team.players.find((player) => {
+      if (player.active === false) return false;
+      const sameNumber = number && String(player.number) === String(number);
+      const sameName = (firstName || lastName)
+        && String(player.firstName || "").toLowerCase() === firstName.toLowerCase()
+        && String(player.lastName || "").toLowerCase() === lastName.toLowerCase();
+      return sameNumber || sameName;
+    });
+    if (existingQuickPlayer) {
+      playerId = existingQuickPlayer.id;
+    } else {
+      const player = {
+        id: createId("player"),
+        number,
+        firstName,
+        lastName,
+        position: $("#quickBatterPosition").value || "",
+        active: true
+      };
+      appData.team.players.push(player);
+      playerId = player.id;
+    }
+  }
+  if (!playerId) return showToast("Sélectionnez un joueur.", "warning");
+  addTeamBatterToDynamicLineup(playerId);
+  executePendingActionForConfirmedBatter();
+}
+
+function confirmOpponentBatterNumber() {
+  const number = $("#dynamicOpponentNumber").value.trim();
+  if (!number) return showToast("Le numéro adverse est obligatoire.", "warning");
+  addOpponentBatterToDynamicLineup(number);
+  executePendingActionForConfirmedBatter();
+}
+
+function findTeamPlayerBySearch(value) {
+  const search = String(value || "").trim().toLowerCase();
+  if (!search) return appData.team.players.filter((player) => player.active !== false);
+  return appData.team.players.filter((player) => (
+    player.active !== false &&
+    [player.number, player.firstName, player.lastName, formatPlayer(player)]
+      .some((item) => String(item || "").toLowerCase().includes(search))
+  ));
+}
+
+function findOpponentBatterByNumber(number) {
+  const game = getCurrentGame();
+  return game?.opponentLineup.find((batter) => String(batter.number) === String(number)) || null;
+}
+
+function addTeamBatterToDynamicLineup(playerId) {
+  const game = getCurrentGame();
+  if (!game) return;
+  const existingIndex = game.lineup.indexOf(playerId);
+  if (existingIndex >= 0 && game.lineupMode === "dynamic" && !game.teamLineupLocked && game.teamLineupBuildCompleteByRepeat) {
+    lockTeamLineup("repeat");
+    game.currentBatterIndex = existingIndex;
+  } else if (addBatterState.replace && game.lineup.length) {
+    game.lineup[game.currentBatterIndex] = playerId;
+  } else if (existingIndex >= 0) {
+    game.currentBatterIndex = existingIndex;
+  } else {
+    game.lineup.push(playerId);
+    game.currentBatterIndex = game.lineup.length - 1;
+  }
+  updateCurrentGame(game);
+  saveData();
+  renderAll();
+}
+
+function addOpponentBatterToDynamicLineup(number) {
+  const game = getCurrentGame();
+  if (!game) return;
+  const existingIndex = game.opponentLineup.findIndex((batter) => String(batter.number) === String(number));
+  if (existingIndex >= 0 && game.opponentLineupMode === "dynamic" && !game.opponentLineupLocked && game.opponentLineupBuildCompleteByRepeat) {
+    lockOpponentLineup("repeat");
+    game.currentOpponentBatterIndex = existingIndex;
+  } else if (addBatterState.replace && game.opponentLineup.length) {
+    const batter = existingIndex >= 0 ? game.opponentLineup[existingIndex] : { id: createId("opp"), number, label: `Adversaire #${number}` };
+    game.opponentLineup[game.currentOpponentBatterIndex] = batter;
+  } else if (existingIndex >= 0) {
+    game.currentOpponentBatterIndex = existingIndex;
+  } else {
+    const batter = { id: createId("opp"), number, label: `Adversaire #${number}` };
+    game.opponentLineup.push(batter);
+    game.currentOpponentBatterIndex = game.opponentLineup.length - 1;
+  }
+  updateCurrentGame(game);
+  renderAll();
+}
+
+function lockTeamLineup(reason = "manual") {
+  const game = getCurrentGame();
+  if (!game) return;
+  if (!game.lineup.length) return showToast("Ajoutez au moins un frappeur avant de verrouiller.", "warning");
+  game.teamLineupLocked = true;
+  game.teamLineupLockReason = reason;
+  showToast(reason === "repeat" ? "Alignement de notre équipe verrouillé automatiquement" : "Alignement de notre équipe verrouillé", "success");
+}
+
+function lockOpponentLineup(reason = "manual") {
+  const game = getCurrentGame();
+  if (!game) return;
+  if (!game.opponentLineup.length) return showToast("Ajoutez au moins un frappeur adverse avant de verrouiller.", "warning");
+  game.opponentLineupLocked = true;
+  game.opponentLineupLockReason = reason;
+  showToast(reason === "repeat" ? "Alignement adverse verrouillé automatiquement" : "Alignement adverse verrouillé", "success");
+}
+
+function lockTeamLineupManually() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie active.", "warning");
+  lockTeamLineup("manual");
+  updateCurrentGame(game);
+  renderAll();
+}
+
+function lockOpponentLineupManually() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie active.", "warning");
+  if (game.opponentTrackingMode !== "complete") return showToast("Le suivi adverse complet n'est pas actif.", "warning");
+  lockOpponentLineup("manual");
+  updateCurrentGame(game);
+  renderAll();
+}
+
+function getExpectedBatter(game, side) {
+  if (side === "opponent") {
+    if (!game.opponentLineup.length) return null;
+    if (game.opponentLineupMode === "dynamic" && !game.opponentLineupLocked && game.currentOpponentBatterIndex >= game.opponentLineup.length) return null;
+    if (game.currentOpponentBatterIndex >= game.opponentLineup.length) game.currentOpponentBatterIndex = 0;
+    return game.opponentLineup[game.currentOpponentBatterIndex] || null;
+  }
+  if (!game.lineup.length) return null;
+  if (game.lineupMode === "dynamic" && !game.teamLineupLocked && game.currentBatterIndex >= game.lineup.length) return null;
+  if (game.currentBatterIndex >= game.lineup.length) game.currentBatterIndex = 0;
+  return findPlayer(game.lineup[game.currentBatterIndex]) || null;
+}
+
+function advanceBatterIndex(game, side) {
+  if (side === "opponent") {
+    if (game.opponentLineupLocked && game.opponentLineup.length) {
+      game.currentOpponentBatterIndex = (game.currentOpponentBatterIndex + 1) % game.opponentLineup.length;
+    } else {
+      game.currentOpponentBatterIndex = game.opponentLineup.length;
+    }
+    return;
+  }
+  if (game.teamLineupLocked && game.lineup.length) {
+    game.currentBatterIndex = (game.currentBatterIndex + 1) % game.lineup.length;
+  } else {
+    game.currentBatterIndex = game.lineup.length;
+  }
+}
+
+function openDefensiveOutModal(batterConfirmed = false) {
+  const game = getCurrentGame();
+  if (!batterConfirmed) return confirmBatterBeforeAction("defensiveOut");
   if (!game || game.status === "terminÃ©e") return showToast("Aucune partie active.", "warning");
 
   const side = getBattingSide(game);
@@ -1223,7 +1460,7 @@ function confirmDefensiveOut() {
     return showToast("SÃ©lectionnez la sÃ©quence du retrait.", "warning");
   }
 
-  recordAtBat("out", play);
+  recordAtBat("out", play, true);
   closeDefensiveOutModal();
 }
 
@@ -1264,9 +1501,9 @@ function recordOffensiveAction(action) {
   recordAtBat(action);
 }
 
-function recordAtBat(action, defensePlay = null) {
+function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
   const game = getCurrentGame();
-  if (game && !ensureCurrentBatter(game)) return;
+  if (!batterConfirmed) return confirmBatterBeforeAction(action, defensePlay);
   if (!game || game.status === "terminée") return showToast("Aucune partie active.", "warning");
 
   const side = getBattingSide(game);
@@ -1339,7 +1576,7 @@ function recordAtBat(action, defensePlay = null) {
 
   atBat.rbi = runsScored;
   getAtBatList(game, side).push(atBat);
-  nextBatter(game, side);
+  advanceBatterIndex(game, side);
   updateCurrentGame(game);
   renderAll();
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
@@ -1626,6 +1863,8 @@ function renderLive() {
   const lastAction = getLastActionLabel(game);
   const battingLabel = battingSide === "team" ? "Notre équipe au bâton" : "Adversaire au bâton";
   const modeLabel = game.opponentTrackingMode === "complete" ? "Mode complet" : "Mode simplifié";
+  const lineupStatus = lineupStatusLabel(game, battingSide);
+  const addedBatters = battingSide === "team" ? game.lineup.length : game.opponentLineup.length;
 
   $("#liveScoreboard").innerHTML = `
     <div class="scoreboard">
@@ -1643,25 +1882,47 @@ function renderLive() {
   $("#liveInfo").innerHTML = gameCards([
     ["Équipe au bâton", battingLabel],
     ["Mode adverse", modeLabel],
+    ["Alignement", lineupStatus],
+    ["Frappeurs ajoutés", `${addedBatters}`],
     ["Manche", `${game.currentInning}`],
     ["Demi", game.half],
     ["Retraits", `${game.outs} / 3`],
     ["Limite", runLimitDescription(game)],
     ["Points cette demi-manche", game.runLimitEnabled && game.runLimitPerInning ? `${getCurrentHalfInningRuns(game)} / ${game.runLimitPerInning}` : `${getCurrentHalfInningRuns(game)}`],
-    ["Frappeur actuel", batter ? displayBatterName(batter, battingSide) : "-"],
-    ["Prochain frappeur", next ? displayBatterName(next, battingSide) : "-"],
+    ["Frappeur actuel", batter ? displayBatterName(batter, battingSide) : "À confirmer"],
+    ["Prochain frappeur", next ? displayBatterName(next, battingSide) : "À confirmer"],
     ["Dernière action", lastAction],
     ["Statut", game.status]
   ]);
 
   $("#oppPlusBtn").disabled = !(battingSide === "opponent" || game.opponentTrackingMode === "simple");
   $("#oppMinusBtn").disabled = false;
+  $("#lockTeamLineupBtn").disabled = game.teamLineupLocked || !game.lineup.length;
+  $("#lockOpponentLineupBtn").disabled = game.opponentTrackingMode !== "complete" || game.opponentLineupLocked || !game.opponentLineup.length;
   $$(".hit-actions button").forEach((button) => {
     button.disabled = battingSide === "opponent" && game.opponentTrackingMode === "simple";
   });
 
   $("#outsDots").innerHTML = renderOutDots(game.outs);
   renderBases(game);
+}
+
+function lineupStatusLabel(game, side) {
+  const dynamic = side === "opponent" ? game.opponentLineupMode === "dynamic" : game.lineupMode === "dynamic";
+  const locked = side === "opponent" ? game.opponentLineupLocked : game.teamLineupLocked;
+  if (!dynamic) return "Alignement préparé";
+  return locked ? "Alignement verrouillé" : "Alignement en construction";
+}
+
+function lineupReportStatus(game, side) {
+  const dynamic = side === "opponent" ? game.opponentLineupMode === "dynamic" : game.lineupMode === "dynamic";
+  const locked = side === "opponent" ? game.opponentLineupLocked : game.teamLineupLocked;
+  const reason = side === "opponent" ? game.opponentLineupLockReason : game.teamLineupLockReason;
+  if (!dynamic) return "Préparé avant la partie";
+  if (!locked) return "Construit pendant la partie, non verrouillé";
+  return reason === "repeat"
+    ? "Construit pendant la partie, verrouillé automatiquement au retour du premier frappeur"
+    : "Construit pendant la partie, verrouillé manuellement";
 }
 
 function getLastActionLabel(game) {
@@ -1840,6 +2101,8 @@ function renderReport() {
           ["Local/Visiteur", game.homeAway],
           ["Mode adverse", game.opponentTrackingMode === "complete" ? "Complet" : "Simplifié"],
           ["Alignement", game.lineupMode === "dynamic" ? "Construit pendant la partie" : "Préparé avant la partie"],
+          ["Statut alignement", lineupReportStatus(game, "team")],
+          ...(opponentComplete ? [["Statut alignement adverse", lineupReportStatus(game, "opponent")]] : []),
           ["Limite de points par manche", runLimitDescription(game)],
           ["Pointage", `${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent}`],
           ["Statut", game.status]

@@ -443,6 +443,8 @@
             <div class="management-grid">
               <button id="endHalfBtn" class="secondary-btn">Fin de demi-manche</button>
               <button id="changeBatterBtn" class="secondary-btn">Changer le frappeur</button>
+              <button id="lockTeamLineupBtn" class="secondary-btn">Verrouiller notre alignement</button>
+              <button id="lockOpponentLineupBtn" class="secondary-btn">Verrouiller alignement adverse</button>
               <button id="oppPlusBtn" class="score-btn">+1 adversaire</button>
               <button id="oppMinusBtn" class="score-btn">-1 adversaire</button>
               <button id="undoBtn" class="warning-btn">Annuler dernière action</button>
@@ -599,18 +601,30 @@
       <div class="modal-title-row">
         <div>
           <p class="eyebrow" id="addBatterSideLabel">Frappeur</p>
-          <h2 id="addBatterTitle">Ajouter le frappeur actuel</h2>
+          <h2 id="addBatterTitle">Confirmer le frappeur</h2>
         </div>
         <button id="cancelAddBatterTopBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+
+      <div id="expectedBatterPanel" class="card-lite hidden">
+        <h3>Frappeur prévu</h3>
+        <p id="expectedBatterText" class="batter-expected-text">-</p>
+        <div class="form-actions">
+          <button id="confirmExpectedBatterBtn" type="button" class="primary-btn">Oui, confirmer</button>
+          <button id="changeExpectedBatterBtn" type="button" class="secondary-btn">Non, changer</button>
+        </div>
       </div>
 
       <div id="teamBatterPanel" class="add-batter-grid">
         <section class="card-lite">
           <h3>Joueur existant</h3>
+          <label>Recherche par numéro, prénom ou nom
+            <input id="batterSearchInput" type="text">
+          </label>
           <label>SÃ©lectionner un joueur
             <select id="existingBatterSelect"></select>
           </label>
-          <button id="useExistingBatterBtn" type="button" class="primary-btn wide">Ajouter comme frappeur</button>
+          <button id="useExistingBatterBtn" type="button" class="primary-btn wide">Confirmer ce frappeur</button>
         </section>
         <section class="card-lite">
           <h3>Ajout rapide</h3>
@@ -637,7 +651,7 @@
         <label>NumÃ©ro du frappeur adverse
           <input id="dynamicOpponentNumber" type="number" min="0" max="99">
         </label>
-        <button id="addOpponentDuringGameBtn" type="button" class="primary-btn wide">Ajouter comme frappeur</button>
+        <button id="addOpponentDuringGameBtn" type="button" class="primary-btn wide">Confirmer ce frappeur</button>
       </div>
 
       <div class="modal-actions">
