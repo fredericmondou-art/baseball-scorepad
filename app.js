@@ -3297,6 +3297,129 @@ function renderSpectatorAnimatedField(liveGame) {
   `;
 }
 
+function renderSpectatorAnimatedField(liveGame) {
+  return `
+    <section class="spectator-card spectator-field-card spectator-field-redesign">
+      <div class="card-title-row">
+        <h2>Terrain animé</h2>
+        <span class="mini-badge">${escapeHtml(spectatorBasesText(liveGame.bases || {}))}</span>
+      </div>
+      <div class="spectator-svg-field-wrap">
+        ${renderSpectatorFieldSvg(liveGame)}
+        <div id="spectatorAnimationLayer" class="field-animation-layer"></div>
+        ${renderEmbeddedMiniScoreboard(liveGame)}
+      </div>
+    </section>
+  `;
+}
+
+function renderSpectatorFieldSvg(liveGame) {
+  const bases = normalizeBasesData(liveGame.bases || {});
+  return `
+    <svg class="spectator-field-svg" viewBox="0 0 1000 720" role="img" aria-label="Terrain de baseball en direct">
+      <defs>
+        <linearGradient id="spectatorGrass" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#287348"></stop>
+          <stop offset="52%" stop-color="#4f9a55"></stop>
+          <stop offset="100%" stop-color="#75b865"></stop>
+        </linearGradient>
+        <pattern id="spectatorMowPattern" width="74" height="74" patternUnits="userSpaceOnUse" patternTransform="rotate(22)">
+          <rect width="37" height="74" fill="#ffffff" opacity="0.055"></rect>
+          <rect x="37" width="37" height="74" fill="#000000" opacity="0.045"></rect>
+        </pattern>
+        <filter id="spectatorSoftShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#0f1f2b" flood-opacity="0.24"></feDropShadow>
+        </filter>
+      </defs>
+      <g class="field-base-layer">
+        <rect width="1000" height="720" rx="28" fill="url(#spectatorGrass)"></rect>
+        <rect width="1000" height="720" rx="28" fill="url(#spectatorMowPattern)" opacity="0.75"></rect>
+        <path d="M86 108 Q500 -24 914 108" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="8"></path>
+        <path d="M500 650 L766 410 L500 214 L234 410 Z" fill="#c58650" stroke="#8f5a34" stroke-width="8" filter="url(#spectatorSoftShadow)"></path>
+        <path d="M500 650 L766 410 M766 410 L500 214 M500 214 L234 410 M234 410 L500 650" stroke="#efd0aa" stroke-width="18" stroke-linecap="round" opacity="0.82"></path>
+        <path d="M500 650 L940 240" stroke="#f8fafc" stroke-width="5" opacity="0.9"></path>
+        <path d="M500 650 L60 240" stroke="#f8fafc" stroke-width="5" opacity="0.9"></path>
+        <path d="M250 390 Q500 292 750 390" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="5"></path>
+        <ellipse cx="500" cy="490" rx="70" ry="45" fill="#b87542" stroke="#8f5a34" stroke-width="5" filter="url(#spectatorSoftShadow)"></ellipse>
+        <rect x="474" y="486" width="52" height="10" rx="5" fill="#f8fafc"></rect>
+        <polygon points="500,650 522,636 522,610 478,610 478,636" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"></polygon>
+        <rect x="428" y="595" width="44" height="88" rx="5" fill="none" stroke="#f8fafc" stroke-width="4" opacity="0.8"></rect>
+        <rect x="528" y="595" width="44" height="88" rx="5" fill="none" stroke="#f8fafc" stroke-width="4" opacity="0.8"></rect>
+        <rect x="748" y="392" width="32" height="32" transform="rotate(45 764 408)" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"></rect>
+        <rect x="484" y="196" width="32" height="32" transform="rotate(45 500 212)" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"></rect>
+        <rect x="220" y="392" width="32" height="32" transform="rotate(45 236 408)" fill="#f8fafc" stroke="#cbd5e1" stroke-width="3"></rect>
+      </g>
+      ${renderDefensivePositions()}
+      ${renderBaseRunners(bases)}
+    </svg>
+  `;
+}
+
+function renderDefensivePositions() {
+  const positions = [
+    ["P", 500, 490],
+    ["C", 500, 684],
+    ["1B", 818, 390],
+    ["2B", 612, 310],
+    ["3B", 182, 390],
+    ["SS", 388, 310],
+    ["LF", 250, 150],
+    ["CF", 500, 94],
+    ["RF", 750, 150]
+  ];
+  return `
+    <g class="defensive-positions-layer">
+      ${positions.map(([label, x, y]) => `
+        <g class="svg-defense-marker" transform="translate(${x} ${y})">
+          <circle r="28"></circle>
+          <text text-anchor="middle" dominant-baseline="central">${label}</text>
+        </g>
+      `).join("")}
+    </g>
+  `;
+}
+
+function renderBaseRunners(bases) {
+  const basePoints = [
+    ["home", 500, 650, "H", null],
+    ["first", 830, 430, "1B", bases.first],
+    ["second", 500, 172, "2B", bases.second],
+    ["third", 170, 430, "3B", bases.third]
+  ];
+  return `
+    <g class="runner-layer">
+      ${basePoints.map(([key, x, y, label, runner]) => {
+        const number = getRunnerNumber(runner);
+        return `
+          <g class="svg-runner-base ${number ? "occupied" : ""}" data-base="${key}" transform="translate(${x} ${y})">
+            <circle r="25"></circle>
+            <text text-anchor="middle" dominant-baseline="central">${escapeHtml(number || label)}</text>
+          </g>
+        `;
+      }).join("")}
+    </g>
+  `;
+}
+
+function normalizeBasesData(bases = {}) {
+  return {
+    first: bases.first || null,
+    second: bases.second || null,
+    third: bases.third || null
+  };
+}
+
+function getRunnerNumber(baseValue) {
+  if (!baseValue) return null;
+  if (typeof baseValue === "object") {
+    return baseValue.number || getRunnerNumber(baseValue.label || baseValue.name || baseValue.value);
+  }
+  const text = String(baseValue).trim();
+  if (!text || text.toLowerCase() === "vide" || text === "—" || text === "â€”") return null;
+  const number = text.match(/#?(\d{1,3})/)?.[1];
+  return number || text.slice(0, 3).toUpperCase();
+}
+
 function renderEmbeddedMiniScoreboard(liveGame) {
   const team = liveGame.team_name || "Notre équipe";
   const opponent = liveGame.opponent_name || "Adversaire";

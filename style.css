@@ -725,6 +725,71 @@ main {
   box-shadow: inset 0 0 90px rgba(11, 55, 32, 0.24);
 }
 
+.spectator-field-redesign {
+  overflow: hidden;
+}
+
+.spectator-svg-field-wrap {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #9eb4a9;
+  border-radius: var(--radius);
+  background: #1f6f42;
+  box-shadow: inset 0 0 70px rgba(11, 55, 32, 0.22);
+}
+
+.spectator-field-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1000 / 720;
+  min-height: 360px;
+}
+
+.svg-defense-marker circle {
+  fill: rgba(185, 28, 28, 0.14);
+  stroke: #dc2626;
+  stroke-width: 5;
+}
+
+.svg-defense-marker text {
+  fill: #7f1d1d;
+  font-size: 22px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+.svg-runner-base circle {
+  fill: rgba(37, 99, 235, 0.08);
+  stroke: #2563eb;
+  stroke-width: 5;
+}
+
+.svg-runner-base.occupied circle {
+  fill: #2563eb;
+  stroke: #dbeafe;
+  filter: drop-shadow(0 5px 10px rgba(37, 99, 235, 0.35));
+}
+
+.svg-runner-base text {
+  fill: #1d4ed8;
+  font-size: 20px;
+  font-weight: 900;
+  pointer-events: none;
+}
+
+.svg-runner-base.occupied text {
+  fill: #fff;
+}
+
+.spectator-svg-field-wrap .field-animation-layer {
+  z-index: 5;
+}
+
+.spectator-svg-field-wrap .mini-broadcast-scoreboard {
+  z-index: 7;
+}
+
 .mini-broadcast-scoreboard {
   position: absolute;
   right: 16px;
@@ -2229,6 +2294,18 @@ textarea {
   .diamond,
   .spectator-diamond {
     min-height: 430px;
+  }
+
+  .spectator-field-svg {
+    min-height: 300px;
+  }
+
+  .svg-defense-marker text {
+    font-size: 18px;
+  }
+
+  .svg-runner-base text {
+    font-size: 18px;
   }
 
   .base {
