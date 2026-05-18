@@ -399,6 +399,7 @@
             <h2>Gestion</h2>
             <div class="management-grid">
               <button id="endHalfBtn" class="secondary-btn">Fin de demi-manche</button>
+              <button id="changeBatterBtn" class="secondary-btn">Changer le frappeur</button>
               <button id="oppPlusBtn" class="score-btn">+1 adversaire</button>
               <button id="oppMinusBtn" class="score-btn">-1 adversaire</button>
               <button id="undoBtn" class="warning-btn">Annuler dernière action</button>
@@ -546,6 +547,58 @@
         <button id="confirmDefensiveOutBtn" type="button" class="primary-btn">Confirmer</button>
         <button id="resetDefensiveOutBtn" type="button" class="warning-btn">Réinitialiser</button>
         <button id="cancelDefensiveOutBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="addBatterModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="addBatterTitle">
+    <div class="modal-card add-batter-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow" id="addBatterSideLabel">Frappeur</p>
+          <h2 id="addBatterTitle">Ajouter le frappeur actuel</h2>
+        </div>
+        <button id="cancelAddBatterTopBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+
+      <div id="teamBatterPanel" class="add-batter-grid">
+        <section class="card-lite">
+          <h3>Joueur existant</h3>
+          <label>SÃ©lectionner un joueur
+            <select id="existingBatterSelect"></select>
+          </label>
+          <button id="useExistingBatterBtn" type="button" class="primary-btn wide">Ajouter comme frappeur</button>
+        </section>
+        <section class="card-lite">
+          <h3>Ajout rapide</h3>
+          <div class="form-row">
+            <label>NumÃ©ro
+              <input id="quickBatterNumber" type="number" min="0" max="99">
+            </label>
+            <label>Position
+              <select id="quickBatterPosition"></select>
+            </label>
+          </div>
+          <label>PrÃ©nom
+            <input id="quickBatterFirstName" type="text">
+          </label>
+          <label>Nom
+            <input id="quickBatterLastName" type="text">
+          </label>
+          <button id="quickAddTeamBatterBtn" type="button" class="primary-btn wide">CrÃ©er et ajouter</button>
+        </section>
+      </div>
+
+      <div id="opponentBatterPanel" class="card-lite hidden">
+        <h3>Frappeur adverse</h3>
+        <label>NumÃ©ro du frappeur adverse
+          <input id="dynamicOpponentNumber" type="number" min="0" max="99">
+        </label>
+        <button id="addOpponentDuringGameBtn" type="button" class="primary-btn wide">Ajouter comme frappeur</button>
+      </div>
+
+      <div class="modal-actions">
+        <button id="cancelAddBatterBtn" type="button" class="secondary-btn">Annuler</button>
       </div>
     </div>
   </div>

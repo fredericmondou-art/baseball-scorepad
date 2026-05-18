@@ -478,7 +478,8 @@ textarea {
   gap: 8px;
 }
 
-.run-limit-settings {
+.run-limit-settings,
+.lineup-mode-settings {
   display: grid;
   gap: 14px;
   padding: 18px;
@@ -487,11 +488,13 @@ textarea {
   background: var(--panel-soft);
 }
 
-.run-limit-settings h3 {
+.run-limit-settings h3,
+.lineup-mode-settings h3 {
   margin: 0;
 }
 
-.run-limit-settings p {
+.run-limit-settings p,
+.lineup-mode-settings p {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 15px;
@@ -1301,6 +1304,29 @@ textarea {
   margin-top: 16px;
 }
 
+.add-batter-modal {
+  max-width: 980px;
+}
+
+.add-batter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card-lite {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.card-lite h3 {
+  margin: 0;
+}
+
 #toast {
   position: fixed;
   left: 50%;
@@ -1349,7 +1375,8 @@ textarea {
   .form-grid,
   .stats-summary,
   .calendar-item,
-  .defensive-modal-grid {
+  .defensive-modal-grid,
+  .add-batter-grid {
     grid-template-columns: 1fr;
   }
 
