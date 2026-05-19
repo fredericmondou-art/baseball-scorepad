@@ -1274,6 +1274,21 @@ textarea {
   background: var(--panel-soft);
 }
 
+.lineup-expected-summary {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(17, 114, 72, 0.22);
+  border-radius: var(--radius);
+  background: var(--panel-tint);
+}
+
+.lineup-expected-summary strong,
+.lineup-expected-summary span {
+  font-size: 0.95rem;
+}
+
 .calendar-item {
   display: grid;
   grid-template-columns: 1fr auto;

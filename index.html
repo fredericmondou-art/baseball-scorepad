@@ -238,6 +238,14 @@
               </select>
             </label>
           </div>
+          <div class="form-row">
+            <label>Nombre de frappeurs prÃ©vu
+              <input id="calendarExpectedTeamBatters" type="number" min="8" max="14" value="9">
+            </label>
+            <label>Nombre de frappeurs adverses prÃ©vu
+              <input id="calendarExpectedOpponentBatters" type="number" min="8" max="14" value="9">
+            </label>
+          </div>
           <section class="run-limit-settings calendar-run-limit">
             <h3>Limite de points par manche</h3>
             <div class="run-limit-toggle">
@@ -328,6 +336,14 @@
               </select>
             </label>
           </div>
+          <div class="form-row">
+            <label>Nombre de frappeurs dans l'alignement
+              <input id="expectedTeamBatters" type="number" min="8" max="14" value="9">
+            </label>
+            <label>Nombre de frappeurs adverses
+              <input id="expectedOpponentBatters" type="number" min="8" max="14" value="9">
+            </label>
+          </div>
         </section>
         <section class="run-limit-settings wide">
           <div class="card-title-row">
@@ -359,10 +375,11 @@
         <div>
           <p class="eyebrow">Ordre offensif</p>
           <h2>Alignement</h2>
-          <p>Minimum 9 joueurs requis pour démarrer.</p>
+          <p>Configurez un alignement de 8 à 14 frappeurs.</p>
         </div>
         <span id="lineupCount" class="pill">0 joueur</span>
       </div>
+      <div id="lineupExpectedSettings" class="card form-row"></div>
       <div class="two-column lineup-layout">
         <div class="card">
           <h3>Joueurs disponibles</h3>
@@ -371,7 +388,7 @@
         <div class="card">
           <div class="card-title-row">
             <h3>Ordre des frappeurs</h3>
-            <span class="hint">9 requis</span>
+            <span id="lineupExpectedHint" class="hint">9 prÃ©vus</span>
           </div>
           <div id="lineupList" class="lineup-list"></div>
           <button id="startGameBtn" class="primary-btn wide submit-large" disabled>Démarrer la partie</button>
@@ -381,7 +398,7 @@
         <div class="card-title-row">
           <div>
             <h3>Alignement adverse</h3>
-            <p>Numéros seulement acceptés. Minimum recommandé : 9 frappeurs.</p>
+            <p>Numéros seulement acceptés. Alignement variable de 8 à 14 frappeurs.</p>
           </div>
           <span id="opponentLineupCount" class="pill">0 adversaire</span>
         </div>
