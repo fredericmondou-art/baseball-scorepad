@@ -570,6 +570,11 @@
               Importer JSON
               <input id="importDataInput" type="file" accept="application/json,.json">
             </label>
+            <button id="exportCurrentGameBtn" class="secondary-btn">Exporter la partie</button>
+            <label class="import-label">
+              Importer une partie
+              <input id="importGameInput" type="file" accept="application/json,.json">
+            </label>
             <button id="resetDataBtn" class="danger-btn wide">Réinitialiser toutes les données</button>
           </div>
         </div>
@@ -690,6 +695,27 @@
 
       <div class="modal-actions">
         <button id="cancelAddBatterBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="resumeGameModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="resumeGameTitle">
+    <div class="modal-card resume-game-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow">Sauvegarde cloud</p>
+          <h2 id="resumeGameTitle">Reprendre une partie</h2>
+        </div>
+        <button id="closeResumeGameBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+      <p>Entrez le code de reprise affiché sur l'autre appareil pour charger la partie complète depuis Supabase.</p>
+      <label>Code de reprise
+        <input id="resumeGameCode" type="text" placeholder="G7K92A" autocomplete="off">
+      </label>
+      <p id="resumeGameStatus" class="cloud-status-text">Le localStorage restera actif sur cet appareil après le chargement.</p>
+      <div class="modal-actions">
+        <button id="loadResumeGameBtn" type="button" class="primary-btn">Charger la partie</button>
+        <button id="cancelResumeGameBtn" type="button" class="secondary-btn">Annuler</button>
       </div>
     </div>
   </div>

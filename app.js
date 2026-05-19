@@ -80,6 +80,7 @@ let spectatorMode = false;
 let spectatorGameState = null;
 let spectatorPlayByPlay = [];
 let spectatorSubscriptions = [];
+let cloudSyncTimers = {};
 
 // Pour un usage public à grande échelle, sécuriser les écritures avec authentification, code marqueur ou Edge Function.
 if (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY) {
@@ -92,7 +93,9 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 document.addEventListener("DOMContentLoaded", initApp);
 
 function initApp() {
-  const watchId = new URLSearchParams(window.location.search).get("watch");
+  const params = new URLSearchParams(window.location.search);
+  const watchId = params.get("watch");
+  const resumeId = params.get("resume");
   if (watchId) {
     spectatorMode = true;
     renderSpectatorMode(watchId);
@@ -115,6 +118,7 @@ function initApp() {
   fillQuickBatterPositionSelect();
   setDefaultGameDate();
   renderAll();
+  if (resumeId) loadGameFromCloud(resumeId);
 }
 
 function setupNavigation() {
@@ -195,6 +199,11 @@ function setupForms() {
   $("#resetDataBtn").addEventListener("click", resetAllData);
   $("#exportDataBtn").addEventListener("click", exportData);
   $("#importDataInput").addEventListener("change", importData);
+  $("#exportCurrentGameBtn")?.addEventListener("click", exportCurrentGame);
+  $("#importGameInput")?.addEventListener("change", importGameFile);
+  $("#closeResumeGameBtn")?.addEventListener("click", closeResumeGameModal);
+  $("#cancelResumeGameBtn")?.addEventListener("click", closeResumeGameModal);
+  $("#loadResumeGameBtn")?.addEventListener("click", () => loadGameFromCloud($("#resumeGameCode").value));
   $("#runLimitEnabled").addEventListener("change", renderRunLimitSettings);
   $("#calendarRunLimitEnabled").addEventListener("change", renderCalendarRunLimitSettings);
   $("#opponentTrackingMode").addEventListener("change", renderLineupModeSettings);
@@ -254,6 +263,7 @@ function setupOfflineStatus() {
       syncPendingLiveEvents(game);
       syncLiveGameState(game);
     }
+    syncPendingCloudSaves();
   });
   window.addEventListener("offline", updateOfflineStatus);
   updateOfflineStatus();
@@ -432,6 +442,9 @@ function normalizeGame(game) {
     liveShareUrl: game.liveShareUrl || null,
     liveLastAction: game.liveLastAction || "",
     pendingLiveEvents: Array.isArray(game.pendingLiveEvents) ? game.pendingLiveEvents : [],
+    cloudSaveStatus: game.cloudSaveStatus || "local",
+    cloudUpdatedAt: game.cloudUpdatedAt || null,
+    pendingCloudSave: game.pendingCloudSave === true,
     history: Array.isArray(game.history) ? game.history : [],
     status: game.status || "préparation"
   };
@@ -535,8 +548,10 @@ function getCurrentGame() {
 function updateCurrentGame(updatedGame) {
   const index = appData.games.findIndex((game) => game.id === updatedGame.id);
   if (index >= 0) {
-    appData.games[index] = normalizeGame(updatedGame);
+    const normalized = normalizeGame(updatedGame);
+    appData.games[index] = normalized;
     saveData();
+    scheduleCloudSave(normalized);
   }
 }
 
@@ -886,6 +901,7 @@ function createGameFromCalendarEvent(eventId) {
   event.linkedGameId = game.id;
   event.status = "Partie créée";
   saveData();
+  scheduleCloudSave(game);
   openLineupForCurrentGame();
   showToast("Partie créée depuis le calendrier.", "success");
 }
@@ -997,6 +1013,7 @@ function createGame(event) {
   appData.games.push(game);
   appData.currentGameId = game.id;
   saveData();
+  scheduleCloudSave(game);
   event.target.reset();
   setDefaultGameDate();
   $("#gameHomeAway").value = "local";
@@ -1061,6 +1078,9 @@ function buildGame({ date, time = "", opponent, field, gameType = "", notes = ""
     liveShareUrl: null,
     liveLastAction: "",
     pendingLiveEvents: [],
+    cloudSaveStatus: "local",
+    cloudUpdatedAt: null,
+    pendingCloudSave: false,
     history: [],
     status
   });
@@ -2775,12 +2795,19 @@ function liveResultLabel(action) {
 function renderLiveBroadcastPanel(game) {
   const panel = $("#liveBroadcastPanel");
   if (!panel) return;
+  if (!game.publicGameId) {
+    ensurePublicGameId(game);
+    saveData();
+  }
   if (game.liveEnabled && (!game.publicGameId || !game.liveShareUrl)) {
     ensureLiveShareFields(game);
     updateCurrentGame(game);
   }
   const liveState = game.liveEnabled ? (navigator.onLine ? "Live actif" : "Live en attente de connexion") : "Live inactif";
   const shareUrl = game.liveShareUrl || "";
+  const resumeCode = ensurePublicGameId(game);
+  const resumeUrl = getResumeShareUrl(game);
+  const cloudStatus = cloudSaveStatusLabel(game);
   panel.innerHTML = `
     <div class="live-broadcast-card ${game.liveEnabled ? "active" : ""}">
       <div>
@@ -2799,13 +2826,42 @@ function renderLiveBroadcastPanel(game) {
         ${shareUrl ? `<button onclick="copyLiveShareLink()">Copier le lien</button><button onclick="openSpectatorLink()">Ouvrir comme spectateur</button>` : ""}
       </div>
     </div>
+    <div class="live-broadcast-card cloud-save-card ${game.pendingCloudSave ? "pending" : "active"}">
+      <div>
+        <span class="mini-badge">${escapeHtml(cloudStatus)}</span>
+        <h3>Reprise multi-appareils</h3>
+        <p>Utilisez ce code ou ce lien pour continuer la partie sur un autre appareil.</p>
+      </div>
+      <div class="resume-code-block">
+        <span>Code de reprise</span>
+        <strong>${escapeHtml(resumeCode)}</strong>
+      </div>
+      <label class="share-link-label">Lien de reprise
+        <input class="share-link-input" value="${escapeHtml(resumeUrl)}" readonly onclick="this.select()">
+      </label>
+      <div class="home-card-actions">
+        <button onclick="copyResumeCode()">Copier le code</button>
+        <button onclick="copyResumeShareLink()">Copier le lien de reprise</button>
+        <button class="primary-btn" onclick="syncFullGameToCloud(getCurrentGame())">Synchroniser cloud</button>
+      </div>
+    </div>
   `;
 }
 
 function ensureLiveShareFields(game) {
-  if (!game.publicGameId) game.publicGameId = generatePublicGameId();
+  ensurePublicGameId(game);
   game.liveShareUrl = `${window.location.origin}${window.location.pathname}?watch=${game.publicGameId}`;
   return game.liveShareUrl;
+}
+
+function ensurePublicGameId(game) {
+  if (!game.publicGameId) game.publicGameId = generatePublicGameId();
+  return game.publicGameId;
+}
+
+function getResumeShareUrl(game) {
+  ensurePublicGameId(game);
+  return `${window.location.origin}${window.location.pathname}?resume=${game.publicGameId}`;
 }
 
 function generatePublicGameId() {
@@ -2825,6 +2881,7 @@ function enableLiveBroadcast() {
   renderAll();
   syncLiveGameState(game);
   syncPendingLiveEvents(game);
+  syncFullGameToCloud(game);
   showToast("Diffusion live activée.", "success");
 }
 
@@ -2846,6 +2903,183 @@ function openSpectatorLink() {
   const game = getCurrentGame();
   if (!game?.liveShareUrl) return;
   window.open(game.liveShareUrl, "_blank");
+}
+
+function copyTextToClipboard(text, message = "Copié.") {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text);
+    showToast(message, "success");
+    return;
+  }
+  const input = document.createElement("input");
+  input.value = text;
+  document.body.appendChild(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+  showToast(message, "success");
+}
+
+function copyResumeCode() {
+  const game = getCurrentGame();
+  if (!game) return;
+  copyTextToClipboard(ensurePublicGameId(game), "Code de reprise copié.");
+}
+
+function copyResumeShareLink() {
+  const game = getCurrentGame();
+  if (!game) return;
+  copyTextToClipboard(getResumeShareUrl(game), "Lien de reprise copié.");
+}
+
+function cloudSaveStatusLabel(game) {
+  if (!navigator.onLine) return "Hors ligne — sauvegarde locale active";
+  if (game.pendingCloudSave || game.cloudSaveStatus === "pending") return "Sauvegarde cloud en attente";
+  if (game.cloudSaveStatus === "synced") return "Sauvegarde cloud à jour";
+  if (!supabaseClient) return "Cloud non disponible";
+  return "Sauvegarde cloud locale";
+}
+
+function setCloudSaveState(gameId, status, pending = false, updatedAt = null) {
+  const index = appData.games.findIndex((game) => game.id === gameId);
+  if (index < 0) return;
+  appData.games[index].cloudSaveStatus = status;
+  appData.games[index].pendingCloudSave = pending;
+  if (updatedAt) appData.games[index].cloudUpdatedAt = updatedAt;
+  saveData();
+  const current = getCurrentGame();
+  if (current?.id === gameId) renderLiveBroadcastPanel(current);
+}
+
+function scheduleCloudSave(game) {
+  if (!game) return;
+  ensurePublicGameId(game);
+  if (!supabaseClient || !navigator.onLine) {
+    setCloudSaveState(game.id, navigator.onLine ? "pending" : "offline", true);
+    return;
+  }
+  setCloudSaveState(game.id, "pending", true);
+  clearTimeout(cloudSyncTimers[game.id]);
+  cloudSyncTimers[game.id] = setTimeout(() => {
+    const latest = appData.games.find((item) => item.id === game.id);
+    syncFullGameToCloud(latest);
+  }, 350);
+}
+
+// Pour un usage public à grande échelle, sécuriser la reprise avec un code marqueur ou authentification.
+async function syncFullGameToCloud(game) {
+  if (!game) return false;
+  ensurePublicGameId(game);
+  if (!supabaseClient || !navigator.onLine) {
+    setCloudSaveState(game.id, navigator.onLine ? "pending" : "offline", true);
+    return false;
+  }
+
+  const updatedAt = new Date().toISOString();
+  const cloudGame = {
+    ...structuredCloneSafe(game),
+    cloudSaveStatus: "synced",
+    pendingCloudSave: false,
+    cloudUpdatedAt: updatedAt
+  };
+  const payload = {
+    public_game_id: game.publicGameId,
+    game_data: cloudGame,
+    updated_at: updatedAt
+  };
+
+  try {
+    const { error } = await supabaseClient
+      .from("saved_games_cloud")
+      .upsert(payload, { onConflict: "public_game_id" });
+    if (error) throw error;
+    setCloudSaveState(game.id, "synced", false, updatedAt);
+    return true;
+  } catch (error) {
+    console.warn("Cloud game sync failed", error);
+    setCloudSaveState(game.id, "pending", true);
+    return false;
+  }
+}
+
+function syncPendingCloudSaves() {
+  if (!supabaseClient || !navigator.onLine) return;
+  appData.games
+    .filter((game) => game.pendingCloudSave || game.cloudSaveStatus === "pending" || game.cloudSaveStatus === "offline")
+    .forEach((game) => syncFullGameToCloud(game));
+}
+
+function openResumeGameModal(prefill = "") {
+  const modal = $("#resumeGameModal");
+  if (!modal) return;
+  $("#resumeGameCode").value = String(prefill || "").trim().toUpperCase();
+  $("#resumeGameStatus").textContent = "Le localStorage restera actif sur cet appareil après le chargement.";
+  modal.classList.remove("hidden");
+  $("#resumeGameCode").focus();
+}
+
+function closeResumeGameModal() {
+  $("#resumeGameModal")?.classList.add("hidden");
+}
+
+async function loadGameFromCloud(publicGameId) {
+  const code = String(publicGameId || "").trim().toUpperCase();
+  if (!code) return showToast("Entrez un code de reprise.", "warning");
+  if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
+  if (!navigator.onLine) return showToast("Connexion requise pour charger une partie cloud.", "warning");
+
+  if ($("#resumeGameStatus")) $("#resumeGameStatus").textContent = "Chargement de la partie...";
+  try {
+    const { data, error } = await supabaseClient
+      .from("saved_games_cloud")
+      .select("*")
+      .eq("public_game_id", code)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.game_data) {
+      if ($("#resumeGameStatus")) $("#resumeGameStatus").textContent = "Aucune partie trouvée pour ce code.";
+      return showToast("Aucune partie trouvée pour ce code.", "warning");
+    }
+
+    const cloudGame = normalizeGame({
+      ...data.game_data,
+      publicGameId: code,
+      cloudSaveStatus: "synced",
+      pendingCloudSave: false,
+      cloudUpdatedAt: data.updated_at || data.game_data.cloudUpdatedAt || null
+    });
+    const existingIndex = appData.games.findIndex((game) => game.publicGameId === code || game.id === cloudGame.id);
+    if (existingIndex >= 0) {
+      const localGame = appData.games[existingIndex];
+      const localUpdated = localGame.cloudUpdatedAt ? new Date(localGame.cloudUpdatedAt).getTime() : 0;
+      const cloudUpdated = data.updated_at ? new Date(data.updated_at).getTime() : 0;
+      if (localUpdated && cloudUpdated && localUpdated >= cloudUpdated) {
+        const replace = confirm("Une version locale existe déjà. Voulez-vous remplacer par la version cloud ?");
+        if (!replace) {
+          appData.currentGameId = localGame.id;
+          saveData();
+          closeResumeGameModal();
+          showScreen("live");
+          return showToast("Version locale conservée.", "info");
+        }
+      }
+      appData.games[existingIndex] = cloudGame;
+    } else {
+      appData.games.push(cloudGame);
+    }
+
+    appData.currentGameId = cloudGame.id;
+    saveData();
+    closeResumeGameModal();
+    renderAll();
+    showScreen("live");
+    showToast("Partie chargée avec succès.", "success");
+  } catch (error) {
+    console.warn("Cloud game load failed", error);
+    if ($("#resumeGameStatus")) $("#resumeGameStatus").textContent = "Impossible de charger la partie cloud.";
+    showToast("Impossible de charger la partie cloud.", "error");
+  }
 }
 
 function gameCards(rows) {
@@ -3155,6 +3389,62 @@ function importData(event) {
   reader.readAsText(file);
 }
 
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportCurrentGame() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie à exporter.", "warning");
+  ensurePublicGameId(game);
+  updateCurrentGame(game);
+  downloadJson(`baseball-scorepad-partie-${game.publicGameId || game.id}.json`, {
+    type: "baseball-scorepad-game",
+    exportedAt: new Date().toISOString(),
+    game
+  });
+  showToast("Partie exportée.", "success");
+}
+
+function importGameFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const imported = JSON.parse(reader.result);
+      const rawGame = imported.game || imported;
+      if (!rawGame || !rawGame.id) throw new Error("Format invalide");
+      const game = normalizeGame(rawGame);
+      ensurePublicGameId(game);
+      const existingIndex = appData.games.findIndex((item) => item.publicGameId === game.publicGameId || item.id === game.id);
+      if (existingIndex >= 0 && !confirm("Une partie avec ce code existe déjà. Voulez-vous la remplacer ?")) return;
+      if (existingIndex >= 0) appData.games[existingIndex] = game;
+      else appData.games.push(game);
+      appData.currentGameId = game.id;
+      saveData();
+      renderAll();
+      showScreen("live");
+      scheduleCloudSave(game);
+      showToast("Partie importée.", "success");
+    } catch (error) {
+      showToast("Le fichier de partie n'est pas valide.", "error");
+    } finally {
+      event.target.value = "";
+    }
+  };
+  reader.readAsText(file);
+}
+
 function renderSettings() {
   $("#teamNameInput").value = appData.team.name;
   const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || ""]).size;
@@ -3236,6 +3526,11 @@ function renderHomeScreen() {
         ])}
       </div>
     </article>
+    <article class="home-card dashboard-card">
+      <h3>Reprendre une partie</h3>
+      <p>Chargez une sauvegarde cloud avec un code de reprise.</p>
+      <button class="primary-btn" onclick="openResumeGameModal()">Entrer un code de reprise</button>
+    </article>
   `;
 
   $("#homeUpcoming").innerHTML = `
@@ -3255,6 +3550,7 @@ function renderHomeScreen() {
     <button onclick="showScreen('players')">Joueurs</button>
     <button onclick="showScreen('stats')">Stats</button>
     <button onclick="openReportForCurrentGame()">Rapport</button>
+    <button onclick="openResumeGameModal()">Reprendre une partie</button>
   `;
 }
 

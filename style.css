@@ -501,6 +501,40 @@ main {
   background: #eefaf3;
 }
 
+.live-broadcast-card.pending {
+  border-color: rgba(232, 169, 54, 0.55);
+  background: #fff8e8;
+}
+
+.cloud-save-card {
+  gap: 14px;
+}
+
+.resume-code-block {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f3f7fb;
+  border: 1px solid rgba(18, 59, 99, 0.14);
+}
+
+.resume-code-block span,
+.cloud-status-text {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.resume-code-block strong {
+  color: var(--sport-blue);
+  font-size: clamp(1.45rem, 4vw, 2.1rem);
+  letter-spacing: 0.08em;
+}
+
+.resume-game-modal {
+  max-width: 520px;
+}
+
 .live-broadcast-card h3,
 .live-broadcast-card p {
   margin: 4px 0 0;
