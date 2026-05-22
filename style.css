@@ -2550,7 +2550,9 @@ textarea {
 .mobile-quick-action-bar,
 .mobile-more-actions-panel,
 .base-action-menu,
-.mobile-situation-field {
+.mobile-situation-field,
+.mobile-situation-details,
+.mobile-game-scoreboard {
   display: none;
 }
 
@@ -2788,8 +2790,16 @@ textarea {
     padding-bottom: 88px;
   }
 
+  .app-header,
+  .top-nav,
+  .header-status {
+    position: static !important;
+    top: auto !important;
+  }
+
   #screen-live {
     overflow-x: clip;
+    padding-bottom: 24px;
   }
 
   #liveLayout {
@@ -2797,8 +2807,7 @@ textarea {
   }
 
   .mobile-scorer-tabs {
-    position: sticky;
-    top: 100px;
+    position: static;
     z-index: 8;
     display: grid;
     grid-column: 1 / -1;
@@ -2838,19 +2847,117 @@ textarea {
     display: none;
   }
 
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(2),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(3),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(4),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(5),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(6),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(14),
-  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(15) {
+  #liveLayout[data-mobile-tab="situation"] #liveInfo {
     display: none;
+  }
+
+  #liveLayout[data-mobile-tab="situation"] .scoreboard {
+    display: none;
+  }
+
+  .scoreboard-card {
+    padding: 14px;
+  }
+
+  .mobile-game-scoreboard {
+    display: grid;
+    gap: 7px;
+  }
+
+  .mobile-score-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    border-bottom: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.86);
+    font-weight: 900;
+  }
+
+  .mobile-score-line strong {
+    color: #fff;
+    font-size: 36px;
+    line-height: 1;
+  }
+
+  .mobile-score-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+  }
+
+  .mobile-score-meta-grid span,
+  .mobile-game-scoreboard p {
+    margin: 0;
+    padding: 8px;
+    border-radius: var(--radius);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.72);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .mobile-score-meta-grid strong,
+  .mobile-game-scoreboard p strong {
+    display: block;
+    margin-top: 3px;
+    color: #fff;
+    font-size: 15px;
   }
 
   .mobile-situation-field {
     display: block;
     margin-top: 10px;
+  }
+
+  .mobile-situation-details {
+    display: block;
+  }
+
+  .mobile-situation-detail-card {
+    margin-top: 10px;
+    padding: 13px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #fff;
+  }
+
+  .mobile-situation-detail-card h3 {
+    margin: 0 0 10px;
+    font-size: 17px;
+  }
+
+  .mobile-situation-detail-card dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    margin: 0;
+  }
+
+  .mobile-situation-detail-card dl div {
+    min-width: 0;
+    padding: 8px;
+    border-radius: var(--radius);
+    background: var(--panel-soft);
+  }
+
+  .mobile-situation-detail-card dl .wide {
+    grid-column: 1 / -1;
+  }
+
+  .mobile-situation-detail-card dt {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .mobile-situation-detail-card dd {
+    overflow-wrap: anywhere;
+    margin: 4px 0 0;
+    font-weight: 900;
+    line-height: 1.25;
   }
 
   .compact-interactive-field {

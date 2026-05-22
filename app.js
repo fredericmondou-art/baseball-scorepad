@@ -2937,6 +2937,7 @@ function renderLive() {
       </div>
     </div>
   `;
+  renderMobileGameScoreboard(game);
 
   $("#liveInfo").innerHTML = gameCards([
     ["Équipe au bâton", battingLabel],
@@ -2977,7 +2978,81 @@ function renderLive() {
   renderMobileScorerTabs();
   renderMobileQuickActionBar(game);
   renderCompactInteractiveBases(game);
+  renderMobileSituationDetails(game);
   renderLastActionCard(game);
+}
+
+function renderMobileGameScoreboard(game) {
+  const scoreboard = $("#liveScoreboard");
+  if (!scoreboard || !game) return;
+  scoreboard.innerHTML += `
+    <div class="mobile-game-scoreboard">
+      <div class="mobile-score-line"><span>${escapeHtml(appData.team.name)}</span><strong>${game.scoreTeam}</strong></div>
+      <div class="mobile-score-line"><span>${escapeHtml(game.opponent || "Adversaire")}</span><strong>${game.scoreOpponent}</strong></div>
+      <div class="mobile-score-meta-grid">
+        <span>Manche <strong>${escapeHtml(formatHalfInningSummary(game))}</strong></span>
+        <span>Retraits <strong>${game.outs} / 3</strong></span>
+      </div>
+      <p>Prochain frappeur <strong>${escapeHtml(getNextBatterLabel(game))}</strong></p>
+    </div>
+  `;
+}
+
+function getNextBatterLabel(game) {
+  const side = getBattingSide(game);
+  const next = getNextBatter(game);
+  return next ? displayBatterName(next, side, game) : "À confirmer";
+}
+
+function getCurrentBatterLabel(game) {
+  const side = getBattingSide(game);
+  const batter = getCurrentBatter(game);
+  return batter ? displayBatterName(batter, side, game) : "À confirmer";
+}
+
+function getBattingSideLabel(game) {
+  return getBattingSide(game) === "team" ? "Notre équipe" : "Adversaire";
+}
+
+function renderLineupStatusSummary(game) {
+  const side = getBattingSide(game);
+  const count = side === "team" ? game.lineup.length : game.opponentLineup.length;
+  const expected = side === "team" ? game.expectedTeamBattersCount : game.expectedOpponentBattersCount;
+  const locked = side === "team" ? game.teamLineupLocked : game.opponentLineupLocked;
+  return locked ? `Alignement verrouillé — ${count} frappeur${count > 1 ? "s" : ""}` : `En construction — ${count} / ${expected}`;
+}
+
+function renderRunLimitSummary(game) {
+  if (!game.runLimitEnabled || !game.runLimitPerInning) return "Aucune limite";
+  return `${getCurrentHalfInningRuns(game)} / ${game.runLimitPerInning} points`;
+}
+
+function renderLastActionSummary(game) {
+  return game.playByPlay?.[0]?.description || "Aucune action";
+}
+
+function formatHalfInningSummary(game) {
+  return `${game.half === "haut" ? "Haut" : "Bas"} ${game.currentInning}e`;
+}
+
+function renderMobileSituationDetails(game) {
+  const details = $("#mobileSituationDetails");
+  if (!details || !game) return;
+  details.innerHTML = `
+    <section class="mobile-situation-detail-card">
+      <h3>Détails de la situation</h3>
+      <dl>
+        <div><dt>Équipe au bâton</dt><dd>${escapeHtml(getBattingSideLabel(game))}</dd></div>
+        <div><dt>Frappeur actuel</dt><dd>${escapeHtml(getCurrentBatterLabel(game))}</dd></div>
+        <div><dt>Mode adverse</dt><dd>${escapeHtml(game.opponentTrackingMode === "complete" ? "Complet" : "Simplifié")}</dd></div>
+        <div><dt>Alignement</dt><dd>${escapeHtml(renderLineupStatusSummary(game))}</dd></div>
+        <div><dt>Limite</dt><dd>${escapeHtml(renderRunLimitSummary(game))}</dd></div>
+        <div><dt>Points demi-manche</dt><dd>${getCurrentHalfInningRuns(game)}</dd></div>
+        <div class="wide"><dt>Dernière action</dt><dd>${escapeHtml(renderLastActionSummary(game))}</dd></div>
+        <div class="wide"><dt>Sauvegarde</dt><dd>${escapeHtml(cloudSaveStatusLabel(game))}</dd></div>
+      </dl>
+    </section>
+  `;
 }
 
 function renderMobileScorerTabs() {
