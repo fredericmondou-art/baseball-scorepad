@@ -415,12 +415,14 @@
     <section id="screen-live" class="screen">
       <div id="matchStateContainer"></div>
       <div id="liveLayout" class="live-layout">
+        <div id="mobileScorerTabs" class="mobile-scorer-tabs"></div>
         <aside class="live-panel">
           <div class="scoreboard-card">
             <p class="eyebrow">Tableau de match</p>
             <div id="liveScoreboard"></div>
           </div>
           <div id="liveInfo" class="game-cards"></div>
+          <div id="mobileSituationField" class="mobile-situation-field"></div>
           <div id="liveBroadcastPanel" class="live-broadcast-panel"></div>
         </aside>
 
@@ -453,6 +455,7 @@
               <span id="currentBatterField">-</span>
             </div>
           </div>
+          <div id="lastActionCard" class="last-action-card"></div>
           <div id="markerPlayByPlay" class="play-by-play-panel"></div>
         </section>
 
@@ -466,7 +469,9 @@
               <button class="hr-btn" data-action="hr">Circuit</button>
               <button class="walk-btn" data-action="bb">BB</button>
               <button class="out-btn" data-action="out">Retrait</button>
+              <button class="out-btn strikeout-btn" data-action="strikeout">K</button>
               <button class="error-btn" data-action="error">Erreur</button>
+              <button class="neutral-btn" data-action="fielderschoice">FC</button>
               <button class="neutral-btn" data-action="sacrifice">Sacrifice</button>
             </div>
           </div>
@@ -475,6 +480,7 @@
             <div class="management-grid">
               <button id="endHalfBtn" class="secondary-btn">Fin de demi-manche</button>
               <button id="changeBatterBtn" class="secondary-btn">Changer le frappeur</button>
+              <button id="editRunnersBtn" class="secondary-btn">Modifier les coureurs</button>
               <button id="lockTeamLineupBtn" class="secondary-btn">Verrouiller notre alignement</button>
               <button id="unlockTeamLineupBtn" class="secondary-btn hidden">DÃ©verrouiller l'alignement</button>
               <button id="lockOpponentLineupBtn" class="secondary-btn">Verrouiller alignement adverse</button>
@@ -487,6 +493,9 @@
           </div>
         </aside>
       </div>
+      <div id="mobileQuickActionBar" class="mobile-quick-action-bar"></div>
+      <div id="mobileMoreActionsPanel" class="mobile-more-actions-panel hidden"></div>
+      <div id="baseActionMenu" class="base-action-menu hidden"></div>
     </section>
 
     <section id="screen-stats" class="screen">
@@ -503,7 +512,7 @@
         <table>
           <thead>
             <tr>
-              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>PP</th><th>P</th><th>MOY</th>
+              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th>
             </tr>
           </thead>
           <tbody id="statsBody"></tbody>
@@ -515,7 +524,7 @@
           <table>
             <thead>
               <tr>
-                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>PP</th><th>P</th><th>MOY</th>
+                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th>
               </tr>
             </thead>
             <tbody id="opponentStatsBody"></tbody>
@@ -635,6 +644,29 @@
     </div>
   </div>
 
+  <div id="outOptionsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="outOptionsTitle">
+    <div class="modal-card out-options-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow">Balle en jeu</p>
+          <h2 id="outOptionsTitle">Type de retrait / balle en jeu</h2>
+        </div>
+        <button id="closeOutOptionsBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+      <div class="out-options-grid">
+        <button type="button" data-out-option="defensive">Retrait défensif</button>
+        <button type="button" data-out-option="strikeout">K · Retrait sur 3 prises</button>
+        <button type="button" data-out-option="sacrifice">Sacrifice</button>
+        <button type="button" data-out-option="fielderschoice">Choix défensif / FC</button>
+        <button type="button" data-out-option="doubleplay">Double jeu</button>
+        <button type="button" data-out-option="runnerout">Retrait d’un coureur</button>
+      </div>
+      <div class="modal-actions runner-modal-actions">
+        <button id="cancelOutOptionsBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
   <div id="addBatterModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="addBatterTitle">
     <div class="modal-card add-batter-modal">
       <div class="modal-title-row">
@@ -695,6 +727,51 @@
 
       <div class="modal-actions">
         <button id="cancelAddBatterBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="runnerMovementModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="runnerMovementTitle">
+    <div class="modal-card runner-movement-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow">Action offensive</p>
+          <h2 id="runnerMovementTitle">Confirmer les déplacements</h2>
+        </div>
+        <button id="closeRunnerMovementBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+      <div id="runnerMovementSummary" class="runner-action-summary"></div>
+      <div id="runnerMovementRows" class="runner-movement-list"></div>
+      <div class="runner-rbi-panel">
+        <label id="runnerDefenseCodeField" class="hidden">Code défensif
+          <input id="runnerMovementDefenseCode" type="text" placeholder="6-4-3">
+        </label>
+        <label>Points produits à attribuer au frappeur
+          <select id="runnerMovementRbi"></select>
+        </label>
+        <p id="runnerMovementError" class="form-error" role="alert"></p>
+      </div>
+      <div class="modal-actions runner-modal-actions">
+        <button id="confirmRunnerMovementBtn" type="button" class="primary-btn">Confirmer</button>
+        <button id="cancelRunnerMovementBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editRunnersModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="editRunnersTitle">
+    <div class="modal-card edit-runners-modal">
+      <div class="modal-title-row">
+        <div>
+          <p class="eyebrow">Gestion</p>
+          <h2 id="editRunnersTitle">Modifier les coureurs</h2>
+        </div>
+        <button id="closeEditRunnersBtn" type="button" class="small-btn secondary-btn">Annuler</button>
+      </div>
+      <div id="editRunnersRows" class="edit-runners-grid"></div>
+      <p id="editRunnersError" class="form-error" role="alert"></p>
+      <div class="modal-actions runner-modal-actions">
+        <button id="confirmEditRunnersBtn" type="button" class="primary-btn">Confirmer</button>
+        <button id="cancelEditRunnersBtn" type="button" class="secondary-btn">Annuler</button>
       </div>
     </div>
   </div>

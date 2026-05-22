@@ -75,6 +75,8 @@ let addBatterState = {
   replace: false
 };
 let pendingAction = null;
+let pendingRunnerMovementAction = null;
+let activeMobileScorerTab = "situation";
 let supabaseClient = null;
 let spectatorMode = false;
 let spectatorGameState = null;
@@ -107,7 +109,10 @@ function initApp() {
   setupForms();
   setupLiveActions();
   setupDefensiveOutModal();
+  setupOutOptionsModal();
   setupAddBatterModal();
+  setupRunnerMovementModal();
+  setupEditRunnersModal();
   setupSegmentedGameForm();
   renderRunLimitSettings();
   renderCalendarRunLimitSettings();
@@ -188,6 +193,7 @@ function setupForms() {
   $("#undoBtn").addEventListener("click", undoLastAction);
   $("#endHalfBtn").addEventListener("click", () => endHalfInning(true));
   $("#changeBatterBtn").addEventListener("click", () => replaceCurrentBatter());
+  $("#editRunnersBtn").addEventListener("click", openEditRunnersModal);
   $("#lockTeamLineupBtn").addEventListener("click", lockTeamLineupManually);
   $("#lockOpponentLineupBtn").addEventListener("click", lockOpponentLineupManually);
   $("#unlockTeamLineupBtn").addEventListener("click", unlockTeamLineup);
@@ -214,11 +220,19 @@ function setupLiveActions() {
   $$(".action-grid [data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.dataset.action === "out") {
-        confirmBatterBeforeAction("defensiveOut");
+        openOutOptionsModal();
         return;
       }
       confirmBatterBeforeAction(button.dataset.action);
     });
+  });
+}
+
+function setupOutOptionsModal() {
+  $("#closeOutOptionsBtn").addEventListener("click", closeOutOptionsModal);
+  $("#cancelOutOptionsBtn").addEventListener("click", closeOutOptionsModal);
+  $$("[data-out-option]").forEach((button) => {
+    button.addEventListener("click", () => selectOutType(button.dataset.outOption));
   });
 }
 
@@ -242,6 +256,20 @@ function setupAddBatterModal() {
   $("#quickAddTeamBatterBtn").addEventListener("click", confirmTeamBatterSelection);
   $("#addOpponentDuringGameBtn").addEventListener("click", confirmOpponentBatterNumber);
   $("#batterSearchInput").addEventListener("input", renderExistingBatterOptions);
+}
+
+function setupRunnerMovementModal() {
+  $("#confirmRunnerMovementBtn").addEventListener("click", confirmRunnerMovementModal);
+  $("#cancelRunnerMovementBtn").addEventListener("click", closeRunnerMovementModal);
+  $("#closeRunnerMovementBtn").addEventListener("click", closeRunnerMovementModal);
+  $("#runnerMovementRows").addEventListener("change", updateRunnerMovementModalState);
+}
+
+function setupEditRunnersModal() {
+  $("#confirmEditRunnersBtn").addEventListener("click", applyManualBaseEdit);
+  $("#cancelEditRunnersBtn").addEventListener("click", closeEditRunnersModal);
+  $("#closeEditRunnersBtn").addEventListener("click", closeEditRunnersModal);
+  $("#editRunnersRows").addEventListener("change", renderManualRunnerNumberInputs);
 }
 
 function setupSegmentedGameForm() {
@@ -537,6 +565,7 @@ function migrateOpponentPlayerLabels(game) {
 function normalizeAtBats(atBats) {
   return Array.isArray(atBats) ? atBats.map((atBat) => ({
     ...atBat,
+    strikeout: Number(atBat.strikeout || 0),
     defensePlay: atBat.defensePlay || null
   })) : [];
 }
@@ -1855,7 +1884,25 @@ function recordOffensiveAction(action) {
   recordAtBat(action);
 }
 
-function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
+function openOutOptionsModal() {
+  $("#outOptionsModal").classList.remove("hidden");
+}
+
+function closeOutOptionsModal() {
+  $("#outOptionsModal").classList.add("hidden");
+}
+
+function selectOutType(type) {
+  closeOutOptionsModal();
+  if (type === "defensive") return confirmBatterBeforeAction("defensiveOut");
+  if (type === "strikeout") return confirmBatterBeforeAction("strikeout");
+  if (type === "sacrifice") return confirmBatterBeforeAction("sacrifice");
+  if (type === "fielderschoice") return confirmBatterBeforeAction("fielderschoice");
+  if (type === "doubleplay") return confirmBatterBeforeAction("doubleplay");
+  if (type === "runnerout") return confirmBatterBeforeAction("runnerout");
+}
+
+function recordAtBat(action, defensePlay = null, batterConfirmed = false, confirmedMovements = null, confirmedRbi = null) {
   const game = getCurrentGame();
   if (!batterConfirmed) return confirmBatterBeforeAction(action, defensePlay);
   if (!game || game.status === "terminée") return showToast("Aucune partie active.", "warning");
@@ -1870,37 +1917,53 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
     return showToast("Ajoutez au moins un frappeur adverse.", "warning");
   }
 
-  snapshotGame(game);
   const batterId = side === "team" ? game.lineup[game.currentBatterIndex] : game.opponentLineup[game.currentOpponentBatterIndex].id;
+  if (usesRunnerMovementModal(action) && !confirmedMovements) {
+    openRunnerMovementModal(action, buildDefaultRunnerMovements(action, game, batterId), {
+      batterId,
+      defensePlay,
+      side
+    });
+    return;
+  }
+
+  snapshotGame(game);
   let runsScored = 0;
   let outsAdded = 0;
   const atBat = makeAtBat(game, batterId, action, side);
 
-  if (action === "single") {
+  if (confirmedMovements) {
+    setAtBatResultStats(atBat, action);
+    const appliedMovements = applyRunnerMovements(game, confirmedMovements, action, confirmedRbi, atBat, side);
+    runsScored = appliedMovements.runsScored;
+    outsAdded = appliedMovements.outsAdded;
+  }
+
+  if (!confirmedMovements && action === "single") {
     runsScored = advanceRunners(game, 1, side);
     placeBatter(game, batterId, "first");
     Object.assign(atBat, { ab: 1, hit: 1, single: 1 });
   }
 
-  if (action === "double") {
+  if (!confirmedMovements && action === "double") {
     runsScored = advanceRunners(game, 2, side);
     placeBatter(game, batterId, "second");
     Object.assign(atBat, { ab: 1, hit: 1, double: 1 });
   }
 
-  if (action === "triple") {
+  if (!confirmedMovements && action === "triple") {
     runsScored = scoreAllRunners(game, side);
     placeBatter(game, batterId, "third");
     Object.assign(atBat, { ab: 1, hit: 1, triple: 1 });
   }
 
-  if (action === "hr") {
+  if (!confirmedMovements && action === "hr") {
     runsScored = scoreAllRunners(game, side) + scoreRun(game, batterId, side);
     clearBases(game);
     Object.assign(atBat, { ab: 1, hit: 1, hr: 1, run: 1 });
   }
 
-  if (action === "bb") {
+  if (!confirmedMovements && action === "bb") {
     runsScored = walkBatter(game, batterId, side);
     atBat.bb = 1;
   }
@@ -1915,20 +1978,41 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
     addOuts(game, outsAdded);
   }
 
-  if (action === "error") {
+  if (action === "strikeout") {
+    const strikeoutPlay = defensePlay || buildStrikeoutDefensePlay();
+    outsAdded = 1;
+    setAtBatResultStats(atBat, action);
+    Object.assign(atBat, {
+      outsAdded,
+      defensePlay: strikeoutPlay
+    });
+    defensePlay = strikeoutPlay;
+    addOuts(game, outsAdded);
+  }
+
+  if (!confirmedMovements && action === "error") {
     runsScored = advanceRunners(game, 1, side);
     placeBatter(game, batterId, "first");
     atBat.ab = 1;
   }
 
-  if (action === "sacrifice") {
+  if (!confirmedMovements && action === "sacrifice") {
     runsScored = advanceRunners(game, 1, side);
     outsAdded = 1;
     Object.assign(atBat, { outsAdded: 1 });
     addOuts(game, 1);
   }
 
-  atBat.rbi = runsScored;
+  if (action === "fielderschoice") {
+    defensePlay = defensePlay || buildFielderChoiceDefensePlay(confirmedMovements || []);
+    atBat.defensePlay = defensePlay;
+  }
+  if (action === "doubleplay") {
+    defensePlay = defensePlay || buildDoublePlayDefensePlay();
+    atBat.defensePlay = defensePlay;
+  }
+
+  atBat.rbi = confirmedMovements ? clampRbiValue(confirmedRbi) : runsScored;
   const batter = side === "opponent" ? findOpponentBatter(game, batterId) : findPlayer(batterId);
   const actionInfo = {
     inning: game.currentInning,
@@ -1938,9 +2022,14 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
     result: liveResultLabel(action),
     defensePlay: defensePlay?.code || "",
     runsScored,
+    runnerMovements: confirmedMovements || [],
+    rbi: atBat.rbi,
     createdAt: new Date().toISOString()
   };
-  actionInfo.description = buildPlayByPlayDescription(actionInfo);
+  actionInfo.description = buildPlayByPlayDescription(actionInfo, confirmedMovements, atBat.rbi);
+  if (confirmedMovements) actionInfo.animation = buildConfirmedMovementAnimation(actionInfo, confirmedMovements);
+  atBat.actionType = action;
+  atBat.runnerMovements = confirmedMovements ? confirmedMovements.map(normalizeRunnerMovement) : [];
   const playEvent = createPlayByPlayEvent(game, actionInfo);
   game.playByPlay.unshift(playEvent);
   game.playByPlay = game.playByPlay.slice(0, 120);
@@ -1963,6 +2052,522 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false) {
   }
 }
 
+function usesRunnerMovementModal(action) {
+  return ["single", "double", "triple", "hr", "bb", "error", "sacrifice", "fielderschoice", "doubleplay", "runnerout"].includes(action);
+}
+
+function recordStrikeout() {
+  recordAtBat("strikeout");
+}
+
+function recordFielderChoice() {
+  recordAtBat("fielderschoice");
+}
+
+function buildStrikeoutDefensePlay() {
+  return {
+    type: "strikeout",
+    code: "K",
+    positions: [],
+    label: "Retrait sur 3 prises"
+  };
+}
+
+function buildFielderChoiceDefensePlay(movements = []) {
+  const outs = calculateOutsFromMovements(movements);
+  return {
+    type: outs > 1 ? "doubleplay" : "fielder_choice",
+    code: outs > 1 ? "DP" : "FC",
+    positions: [],
+    label: outs > 1 ? "Double jeu sur choix défensif" : "Choix défensif"
+  };
+}
+
+function buildDoublePlayDefensePlay(code = "") {
+  return {
+    type: "doubleplay",
+    code: String(code || "DP").trim() || "DP",
+    positions: String(code || "").split("-").map(Number).filter(Boolean),
+    label: "Double jeu"
+  };
+}
+
+function setAtBatResultStats(atBat, action) {
+  if (action === "single") Object.assign(atBat, { ab: 1, hit: 1, single: 1 });
+  if (action === "double") Object.assign(atBat, { ab: 1, hit: 1, double: 1 });
+  if (action === "triple") Object.assign(atBat, { ab: 1, hit: 1, triple: 1 });
+  if (action === "hr") Object.assign(atBat, { ab: 1, hit: 1, hr: 1 });
+  if (action === "bb") atBat.bb = 1;
+  if (action === "error" || action === "fielderschoice" || action === "runnerout" || action === "doubleplay") atBat.ab = 1;
+  if (action === "strikeout") Object.assign(atBat, { ab: 1, strikeout: 1 });
+}
+
+function buildDefaultRunnerMovements(actionType, game, batterId = null) {
+  const side = getBattingSide(game);
+  const batterRunnerId = batterId || (side === "team"
+    ? game.lineup[game.currentBatterIndex]
+    : game.opponentLineup[game.currentOpponentBatterIndex]?.id);
+  const batter = side === "opponent" ? findOpponentBatter(game, batterRunnerId) : findPlayer(batterRunnerId);
+  const defaults = [];
+  const byBase = [
+    ["third", "3B"],
+    ["second", "2B"],
+    ["first", "1B"]
+  ];
+  let runnerOutAssigned = false;
+
+  byBase.forEach(([baseKey, from]) => {
+    const runnerId = game.bases[baseKey];
+    if (!runnerId) return;
+    let destination = defaultRunnerDestination(actionType, from, game);
+    if (actionType === "runnerout") {
+      destination = runnerOutAssigned ? "stay" : "out";
+      runnerOutAssigned = true;
+    }
+    defaults.push(makeRunnerMovement(runnerId, movementRunnerLabel(runnerId, game), from, destination, false));
+  });
+
+  defaults.push(makeRunnerMovement(
+    batterRunnerId,
+    batter ? displayBatterName(batter, side, game) : movementRunnerLabel(batterRunnerId, game),
+    "home",
+    defaultBatterDestination(actionType),
+    true
+  ));
+  return defaults;
+}
+
+function makeRunnerMovement(runnerId, runnerLabel, from, to, isBatter) {
+  return normalizeRunnerMovement({
+    runnerId,
+    runnerLabel,
+    from,
+    to,
+    isBatter
+  });
+}
+
+function normalizeRunnerMovement(movement) {
+  const to = movement.to || "stay";
+  return {
+    runnerId: movement.runnerId,
+    runnerLabel: movement.runnerLabel || "Coureur",
+    from: movement.from || "home",
+    to,
+    scored: to === "home",
+    out: to === "out",
+    outAt: to === "out" ? (movement.outAt || defaultOutAt(movement)) : "",
+    isBatter: movement.isBatter === true
+  };
+}
+
+function defaultOutAt(movement) {
+  if (movement.isBatter) return "1B";
+  if (movement.from === "1B") return "2B";
+  if (movement.from === "2B") return "3B";
+  return "home";
+}
+
+function defaultBatterDestination(actionType) {
+  return {
+    single: "1B",
+    double: "2B",
+    triple: "3B",
+    hr: "home",
+    bb: "1B",
+    error: "1B",
+    sacrifice: "out",
+    fielderschoice: "1B",
+    runnerout: "1B",
+    doubleplay: "out"
+  }[actionType] || "1B";
+}
+
+function defaultRunnerDestination(actionType, from, game) {
+  if (actionType === "fielderschoice") {
+    if (from === "1B") return "out";
+    return "stay";
+  }
+  if (actionType === "runnerout") return "out";
+  if (actionType === "doubleplay") return from === "1B" ? "out" : "stay";
+  if (actionType === "triple" || actionType === "hr") return "home";
+  if (actionType === "double") return from === "1B" ? "3B" : "home";
+  if (actionType === "bb") return defaultWalkRunnerDestination(from, game);
+  if (from === "3B") return "home";
+  if (from === "2B") return "3B";
+  return "2B";
+}
+
+function defaultWalkRunnerDestination(from, game) {
+  if (from === "3B") return game.bases.first && game.bases.second && game.bases.third ? "home" : "stay";
+  if (from === "2B") return game.bases.first && game.bases.second ? "3B" : "stay";
+  return game.bases.first ? "2B" : "stay";
+}
+
+function movementRunnerLabel(runnerId, game) {
+  const player = findPlayer(runnerId);
+  if (player) return formatPlayer(player);
+  return opponentRunnerName(runnerId, game);
+}
+
+function calculateRunsFromMovements(movements) {
+  return movements.filter((movement) => movement.to === "home").length;
+}
+
+function calculateOutsFromMovements(movements) {
+  return movements.filter((movement) => movement.to === "out").length;
+}
+
+function calculateDefaultRbi(actionType, movements) {
+  const runs = calculateRunsFromMovements(movements);
+  if (["single", "double", "triple", "hr"].includes(actionType)) return Math.min(4, runs);
+  if (actionType === "error") return 0;
+  if (actionType === "sacrifice") return runs ? 1 : 0;
+  if (actionType === "bb") return Math.min(4, runs);
+  if (actionType === "fielderschoice") return 0;
+  if (actionType === "runnerout" || actionType === "doubleplay") return 0;
+  return 0;
+}
+
+function clampRbiValue(value) {
+  const number = Number(value || 0);
+  return Math.min(4, Math.max(0, Number.isFinite(number) ? Math.round(number) : 0));
+}
+
+function validateRunnerMovements(movements) {
+  const validTo = new Set(["out", "1B", "2B", "3B", "home", "stay"]);
+  const baseOrder = { "1B": 1, "2B": 2, "3B": 3, home: 4 };
+  const occupied = new Set();
+  for (const movement of movements) {
+    if (!movement.runnerId || !validTo.has(movement.to)) return "Chaque coureur doit avoir une destination valide.";
+    const finalBase = movement.to === "stay" ? movement.from : movement.to;
+    if (["1B", "2B", "3B"].includes(finalBase)) {
+      if (occupied.has(finalBase)) return "Deux coureurs ne peuvent pas terminer sur le même but.";
+      occupied.add(finalBase);
+    }
+    if (!movement.isBatter && movement.to !== "stay" && baseOrder[movement.to] && baseOrder[movement.to] < baseOrder[movement.from]) {
+      return "Un coureur ne peut pas reculer vers un but précédent.";
+    }
+  }
+  return "";
+}
+
+function applyRunnerMovements(game, movements, actionType, rbi, atBat, side) {
+  const normalized = movements.map(normalizeRunnerMovement);
+  clearBases(game);
+  let runsScored = 0;
+  let outsAdded = 0;
+
+  normalized.forEach((movement) => {
+    const destination = movement.to === "stay" ? movement.from : movement.to;
+    if (destination === "out") {
+      outsAdded += 1;
+      return;
+    }
+    if (destination === "home") {
+      if (movement.isBatter) {
+        runsScored += scoreCurrentAtBatRun(game, side);
+        atBat.run += 1;
+      } else {
+        runsScored += scoreRun(game, movement.runnerId, side);
+      }
+      return;
+    }
+    const baseKey = movementBaseKey(destination);
+    if (baseKey) game.bases[baseKey] = movement.runnerId;
+  });
+
+  if (outsAdded) {
+    atBat.outsAdded = outsAdded;
+    addOuts(game, outsAdded);
+  }
+  atBat.rbi = clampRbiValue(rbi);
+  return { runsScored, outsAdded };
+}
+
+function scoreCurrentAtBatRun(game, side) {
+  ensureInningScore(game, game.currentInning);
+  const inning = game.inningScores[game.currentInning - 1];
+  if (side === "opponent") {
+    game.scoreOpponent += 1;
+    inning.opponent += 1;
+  } else {
+    game.scoreTeam += 1;
+    inning.team += 1;
+  }
+  return 1;
+}
+
+function movementBaseKey(destination) {
+  return { "1B": "first", "2B": "second", "3B": "third" }[destination] || "";
+}
+
+function buildConfirmedMovementAnimation(actionInfo, movements) {
+  const ballPaths = {
+    Simple: ["home", "outfield-right"],
+    Double: ["home", "outfield-center"],
+    Triple: ["home", "outfield-left"],
+    Circuit: ["home", "outfield-deep"],
+    BB: [],
+    Erreur: ["home", "6"],
+    Sacrifice: ["home", "outfield-center"]
+  };
+  const animationMovements = movements
+    .filter((movement) => movement.to !== "out" && movement.to !== "stay")
+    .map((movement) => ({
+      runner: movement.runnerLabel,
+      from: movement.from,
+      to: movement.to,
+      via: movement.isBatter && movement.to === "home" ? ["1B", "2B", "3B"] : []
+    }));
+  return playAnimation(
+    String(actionInfo.result || "").toLowerCase().replaceAll(" ", ""),
+    actionInfo,
+    ballPaths[actionInfo.result] || ["home", "outfield-center"],
+    animationMovements,
+    actionInfo.description || `${actionInfo.result} de ${actionInfo.batter}`,
+    actionInfo.result === "Circuit" ? 4200 : 3200
+  );
+}
+
+function openRunnerMovementModal(actionType, defaultMovements, context = {}) {
+  pendingRunnerMovementAction = {
+    actionType,
+    defensePlay: context.defensePlay || null,
+    side: context.side || getBattingSide(getCurrentGame()),
+    batterId: context.batterId || null,
+    movements: defaultMovements.map(normalizeRunnerMovement)
+  };
+  $("#runnerMovementError").textContent = "";
+  $("#runnerMovementTitle").textContent = "Confirmer les déplacements";
+  renderRunnerMovementModal();
+  $("#runnerMovementModal").classList.remove("hidden");
+}
+
+function closeRunnerMovementModal() {
+  pendingRunnerMovementAction = null;
+  $("#runnerMovementModal").classList.add("hidden");
+  $("#runnerMovementError").textContent = "";
+}
+
+function renderRunnerMovementModal() {
+  const pending = pendingRunnerMovementAction;
+  if (!pending) return;
+  const game = getCurrentGame();
+  const runs = calculateRunsFromMovements(pending.movements);
+  const outs = calculateOutsFromMovements(pending.movements);
+  $("#runnerMovementSummary").innerHTML = `
+    <span class="pill">${escapeHtml(liveResultLabel(pending.actionType))}</span>
+    <strong data-runner-summary-runs>${escapeHtml(runs ? `${runs} point${runs > 1 ? "s" : ""} proposé${runs > 1 ? "s" : ""}` : "Aucun point proposé")}</strong>
+    <span class="runner-outs-summary" data-runner-summary-outs>Retraits ajoutés : ${outs}</span>
+  `;
+  $("#runnerMovementRows").innerHTML = pending.movements.map((movement, index) => renderRunnerMovementRow(movement, index)).join("");
+  $("#runnerMovementRbi").innerHTML = [0, 1, 2, 3, 4].map((value) => (
+    `<option value="${value}" ${value === calculateDefaultRbi(pending.actionType, pending.movements) ? "selected" : ""}>${value}</option>`
+  )).join("");
+  $("#runnerDefenseCodeField").classList.toggle("hidden", pending.actionType !== "doubleplay");
+  $("#runnerMovementDefenseCode").value = pending.defensePlay?.code && pending.defensePlay.code !== "DP" ? pending.defensePlay.code : "";
+  $("#runnerMovementRows").dataset.battingSide = pending.side || (game ? getBattingSide(game) : "team");
+}
+
+function renderRunnerMovementRow(movement, index) {
+  const options = runnerDestinationOptions(movement);
+  const fromLabel = movement.isBatter ? "Départ marbre" : `Départ ${movement.from}`;
+  return `
+    <section class="runner-movement-row">
+      <div class="runner-movement-player">
+        <span>${movement.isBatter ? "Frappeur" : "Coureur"}</span>
+        <strong>${escapeHtml(movement.runnerLabel)}</strong>
+        <span>${escapeHtml(fromLabel)}</span>
+      </div>
+      <div class="runner-destination-group">
+        <span class="runner-destination-label">Destination finale</span>
+        <div class="runner-destination-options" role="radiogroup" aria-label="Destination ${escapeHtml(movement.runnerLabel)}">
+          ${options.map((option) => `
+            <label>
+              <input type="radio" name="runnerDestination${index}" value="${option.value}" data-runner-movement-index="${index}" ${movement.to === option.value ? "checked" : ""}>
+              ${escapeHtml(option.label)}
+            </label>
+          `).join("")}
+        </div>
+        ${movement.to === "out" ? renderRunnerOutAtControl(movement, index) : ""}
+      </div>
+    </section>
+  `;
+}
+
+function renderRunnerOutAtControl(movement, index) {
+  return `
+    <label class="runner-out-at">Retiré à
+      <select data-runner-out-at-index="${index}">
+        ${[
+          ["1B", "1B"],
+          ["2B", "2B"],
+          ["3B", "3B"],
+          ["home", "Marbre"]
+        ].map(([value, label]) => `<option value="${value}" ${movement.outAt === value ? "selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function runnerDestinationOptions(movement) {
+  if (movement.isBatter) {
+    return [
+      { value: "out", label: "Retiré" },
+      { value: "1B", label: "1B" },
+      { value: "2B", label: "2B" },
+      { value: "3B", label: "3B" },
+      { value: "home", label: "Marbre" }
+    ];
+  }
+
+  const currentOrder = { "1B": 1, "2B": 2, "3B": 3 }[movement.from] || 1;
+  const baseOptions = [
+    { value: "1B", label: "1B", order: 1 },
+    { value: "2B", label: "2B", order: 2 },
+    { value: "3B", label: "3B", order: 3 }
+  ].filter((option) => option.order > currentOrder);
+  return [
+    { value: "stay", label: `Reste ${movement.from}` },
+    ...baseOptions,
+    { value: "home", label: "Marbre" },
+    { value: "out", label: "Retiré" }
+  ];
+}
+
+function updateRunnerMovementModalState(event) {
+  if (!pendingRunnerMovementAction) return;
+  if (event.target.matches("[data-runner-out-at-index]")) {
+    const outAtIndex = Number(event.target.dataset.runnerOutAtIndex);
+    pendingRunnerMovementAction.movements[outAtIndex] = normalizeRunnerMovement({
+      ...pendingRunnerMovementAction.movements[outAtIndex],
+      outAt: event.target.value
+    });
+    $("#runnerMovementError").textContent = "";
+    return;
+  }
+  if (!event.target.matches("[data-runner-movement-index]")) return;
+  const index = Number(event.target.dataset.runnerMovementIndex);
+  pendingRunnerMovementAction.movements[index] = normalizeRunnerMovement({
+    ...pendingRunnerMovementAction.movements[index],
+    to: event.target.value
+  });
+  const runs = calculateRunsFromMovements(pendingRunnerMovementAction.movements);
+  const outs = calculateOutsFromMovements(pendingRunnerMovementAction.movements);
+  $("#runnerMovementSummary [data-runner-summary-runs]").textContent = runs ? `${runs} point${runs > 1 ? "s" : ""} proposé${runs > 1 ? "s" : ""}` : "Aucun point proposé";
+  $("#runnerMovementSummary [data-runner-summary-outs]").textContent = `Retraits ajoutés : ${outs}`;
+  $("#runnerMovementRbi").value = String(calculateDefaultRbi(pendingRunnerMovementAction.actionType, pendingRunnerMovementAction.movements));
+  $("#runnerMovementError").textContent = "";
+  $("#runnerMovementRows").innerHTML = pendingRunnerMovementAction.movements.map((movement, movementIndex) => renderRunnerMovementRow(movement, movementIndex)).join("");
+}
+
+function confirmRunnerMovementModal() {
+  const pending = pendingRunnerMovementAction;
+  if (!pending) return;
+  const movements = pending.movements.map(normalizeRunnerMovement);
+  const error = validateRunnerMovements(movements);
+  if (error) {
+    $("#runnerMovementError").textContent = error;
+    return;
+  }
+  const actionType = pending.actionType;
+  const defenseCode = $("#runnerMovementDefenseCode").value.trim();
+  const defensePlay = actionType === "doubleplay" ? buildDoublePlayDefensePlay(defenseCode) : pending.defensePlay;
+  const rbi = clampRbiValue($("#runnerMovementRbi").value);
+  closeRunnerMovementModal();
+  recordAtBat(actionType, defensePlay, true, movements, rbi);
+}
+
+function openEditRunnersModal() {
+  const game = getCurrentGame();
+  if (!game || normalizeGameStatus(game.status) === "completed") return showToast("Aucune partie active.", "warning");
+  $("#editRunnersError").textContent = "";
+  $("#editRunnersRows").innerHTML = ["1B", "2B", "3B"].map((base) => renderManualRunnerRow(base, game)).join("");
+  renderManualRunnerNumberInputs();
+  $("#editRunnersModal").classList.remove("hidden");
+}
+
+function closeEditRunnersModal() {
+  $("#editRunnersModal").classList.add("hidden");
+  $("#editRunnersError").textContent = "";
+}
+
+function renderManualRunnerRow(base, game) {
+  const baseKey = movementBaseKey(base);
+  const runnerId = game.bases[baseKey];
+  const side = getBattingSide(game);
+  const options = manualRunnerOptions(game, side, runnerId);
+  return `
+    <section class="edit-runner-row">
+      <strong>${base}</strong>
+      <div class="edit-runner-controls">
+        <label>Coureur
+          <select data-manual-base="${base}">
+            ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === (runnerId || "") ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="manual-runner-number ${side === "opponent" ? "" : "hidden"}">Nouveau numéro adverse
+          <input data-manual-number="${base}" type="number" min="0" max="999">
+        </label>
+      </div>
+    </section>
+  `;
+}
+
+function manualRunnerOptions(game, side, runnerId) {
+  const empty = [{ value: "", label: "Vider le but" }];
+  if (side === "team") {
+    const ids = [...new Set([...(game.lineup || []), ...(runnerId ? [runnerId] : [])])];
+    return empty.concat(ids.map((id) => ({ value: id, label: movementRunnerLabel(id, game) })));
+  }
+  return empty
+    .concat(game.opponentLineup.map((batter) => ({ value: batter.id, label: opponentBatterName(batter, game) })))
+    .concat([{ value: "__new__", label: "Entrer un nouveau numéro" }]);
+}
+
+function renderManualRunnerNumberInputs() {
+  $$("#editRunnersRows [data-manual-base]").forEach((select) => {
+    const label = select.closest(".edit-runner-controls")?.querySelector(".manual-runner-number");
+    if (!label) return;
+    label.classList.toggle("hidden", select.value !== "__new__");
+  });
+}
+
+function applyManualBaseEdit() {
+  const game = getCurrentGame();
+  if (!game) return;
+  const selectedIds = [];
+  const nextBases = { first: null, second: null, third: null };
+  for (const select of $$("#editRunnersRows [data-manual-base]")) {
+    let runnerId = select.value;
+    if (runnerId === "__new__") {
+      const number = select.closest(".edit-runner-row")?.querySelector("[data-manual-number]")?.value.trim();
+      if (!number) {
+        $("#editRunnersError").textContent = "Entrez le numéro du nouveau coureur adverse.";
+        return;
+      }
+      const existing = findOpponentBatterByNumber(number);
+      const batter = existing || createOpponentPlayer(number, game);
+      if (!existing) game.opponentLineup.push(batter);
+      runnerId = batter.id;
+    }
+    if (runnerId && selectedIds.includes(runnerId)) {
+      $("#editRunnersError").textContent = "Le même joueur ne peut pas occuper deux buts.";
+      return;
+    }
+    if (runnerId) selectedIds.push(runnerId);
+    nextBases[movementBaseKey(select.dataset.manualBase)] = runnerId || null;
+  }
+  snapshotGame(game);
+  game.bases = nextBases;
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  closeEditRunnersModal();
+  renderAll();
+  showToast("Coureurs mis à jour.", "success");
+}
+
 function actionFeedback(action, runsScored, defensePlay = null) {
   const runText = runsScored > 0 ? ` · ${runsScored} point${runsScored > 1 ? "s" : ""} marqué${runsScored > 1 ? "s" : ""}` : "";
   if (action === "out" && defensePlay?.code) {
@@ -1976,7 +2581,11 @@ function actionFeedback(action, runsScored, defensePlay = null) {
     hr: "Circuit!",
     bb: "But sur balles enregistré",
     out: "Retrait ajouté",
+    strikeout: "Retrait sur 3 prises enregistré",
     error: "Erreur enregistrée",
+    fielderschoice: "Choix défensif enregistré",
+    doubleplay: "Double jeu enregistré",
+    runnerout: "Retrait de coureur enregistré",
     sacrifice: "Sacrifice enregistré"
   };
   return `${labels[action] || "Action enregistrée"}${runText}`;
@@ -1997,6 +2606,7 @@ function makeAtBat(game, playerId, result, side) {
     triple: 0,
     hr: 0,
     bb: 0,
+    strikeout: 0,
     rbi: 0,
     run: 0,
     outsAdded: 0,
@@ -2251,6 +2861,36 @@ function undoLastAction() {
   showToast("Dernière action annulée.", "warning");
 }
 
+function editLastAction() {
+  const game = getCurrentGame();
+  if (!game) return;
+  const last = [...game.atBats, ...game.opponentAtBats]
+    .filter((atBat) => Array.isArray(atBat.runnerMovements) && atBat.runnerMovements.length)
+    .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")))[0];
+  if (!last) return showToast("Cette action se corrige avec Annuler ou Modifier les coureurs.", "info");
+  const movements = last.runnerMovements.map(normalizeRunnerMovement);
+  const actionType = last.actionType || actionTypeFromResult(last.result);
+  const defensePlay = last.defensePlay || null;
+  const rbi = last.rbi || 0;
+  undoLastAction();
+  openRunnerMovementModal(actionType, movements, { defensePlay, side: last.side, batterId: last.playerId });
+  $("#runnerMovementRbi").value = String(clampRbiValue(rbi));
+}
+
+function actionTypeFromResult(result) {
+  return {
+    Simple: "single",
+    Double: "double",
+    Triple: "triple",
+    Circuit: "hr",
+    BB: "bb",
+    Erreur: "error",
+    Sacrifice: "sacrifice",
+    FC: "fielderschoice",
+    DP: "doubleplay"
+  }[String(result || "")] || "runnerout";
+}
+
 function ensureInningScore(game, inning) {
   while (game.inningScores.length < inning) {
     game.inningScores.push({
@@ -2334,6 +2974,171 @@ function renderLive() {
   renderAnimatedField(game);
   renderBases(game);
   renderPlayByPlay(game);
+  renderMobileScorerTabs();
+  renderMobileQuickActionBar(game);
+  renderCompactInteractiveBases(game);
+  renderLastActionCard(game);
+}
+
+function renderMobileScorerTabs() {
+  const tabs = $("#mobileScorerTabs");
+  const liveLayout = $("#liveLayout");
+  if (!tabs || !liveLayout) return;
+  liveLayout.dataset.mobileTab = activeMobileScorerTab;
+  tabs.innerHTML = [
+    ["situation", "Situation"],
+    ["scoring", "Marquer"],
+    ["history", "Historique"]
+  ].map(([tab, label]) => `<button type="button" class="${tab === activeMobileScorerTab ? "active" : ""}" onclick="setActiveScorerTab('${tab}')">${label}</button>`).join("");
+}
+
+function setActiveScorerTab(tabName) {
+  activeMobileScorerTab = ["situation", "scoring", "history"].includes(tabName) ? tabName : "situation";
+  renderMobileScorerTabs();
+}
+
+function renderMobileQuickActionBar(game) {
+  const bar = $("#mobileQuickActionBar");
+  if (!bar) return;
+  if (!game || !canOpenLiveMatch(game)) {
+    bar.innerHTML = "";
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  bar.innerHTML = `
+    <button type="button" onclick="triggerScorerAction('single')">Simple</button>
+    <button type="button" onclick="triggerScorerAction('double')">Double</button>
+    <button type="button" onclick="triggerScorerAction('bb')">BB</button>
+    <button type="button" onclick="triggerScorerAction('strikeout')">K</button>
+    <button type="button" onclick="openOutOptionsModal()">Retrait</button>
+    <button type="button" class="primary-btn" onclick="openMoreActionsPanel()">Plus</button>
+  `;
+}
+
+function triggerScorerAction(action) {
+  closeMoreActionsPanel();
+  if (action === "out") return openOutOptionsModal();
+  confirmBatterBeforeAction(action);
+}
+
+function openMoreActionsPanel() {
+  const panel = $("#mobileMoreActionsPanel");
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="mobile-more-title"><strong>Plus d’actions</strong><button type="button" onclick="closeMoreActionsPanel()">Fermer</button></div>
+    <div class="mobile-more-grid">
+      <button type="button" onclick="triggerScorerAction('triple')">Triple</button>
+      <button type="button" onclick="triggerScorerAction('hr')">Circuit</button>
+      <button type="button" onclick="triggerScorerAction('error')">Erreur</button>
+      <button type="button" onclick="triggerScorerAction('sacrifice')">Sacrifice</button>
+      <button type="button" onclick="triggerScorerAction('fielderschoice')">FC</button>
+      <button type="button" onclick="triggerScorerAction('doubleplay')">Double jeu</button>
+      <button type="button" onclick="triggerScorerAction('runnerout')">Retrait coureur</button>
+      <button type="button" onclick="closeMoreActionsPanel();openEditRunnersModal()">Modifier coureurs</button>
+      <button type="button" onclick="closeMoreActionsPanel();endHalfInning(true)">Fin demi-manche</button>
+    </div>
+  `;
+  panel.classList.remove("hidden");
+}
+
+function closeMoreActionsPanel() {
+  $("#mobileMoreActionsPanel")?.classList.add("hidden");
+}
+
+function renderCompactInteractiveBases(game) {
+  const field = $("#mobileSituationField");
+  if (!field) return;
+  if (!game) return field.innerHTML = "";
+  field.innerHTML = `
+    <div class="compact-interactive-field">
+      ${["2B", "3B", "1B"].map((base) => {
+        const runnerId = game.bases[movementBaseKey(base)];
+        return `<button type="button" class="compact-base compact-${base.toLowerCase()}" onclick="openBaseActionMenu('${base}')"><strong>${base}</strong><span>${escapeHtml(runnerId ? runnerName(runnerId, game) : "Vide")}</span></button>`;
+      }).join("")}
+      <button type="button" class="compact-base compact-home" onclick="openEditRunnersModal()"><strong>Marbre</strong><span>Modifier</span></button>
+    </div>
+  `;
+}
+
+function openBaseActionMenu(base) {
+  const game = getCurrentGame();
+  const menu = $("#baseActionMenu");
+  if (!game || !menu) return;
+  const runnerId = game.bases[movementBaseKey(base)];
+  const destinations = base === "1B" ? ["2B", "3B", "home"] : base === "2B" ? ["3B", "home"] : ["home"];
+  menu.innerHTML = `
+    <div class="base-action-card">
+      <div class="mobile-more-title"><strong>${base} : ${escapeHtml(runnerId ? runnerName(runnerId, game) : "Vide")}</strong><button type="button" onclick="closeBaseActionMenu()">Fermer</button></div>
+      <div class="mobile-more-grid">
+        <button type="button" onclick="closeBaseActionMenu();openEditRunnersModal()">Modifier le joueur</button>
+        ${runnerId ? destinations.map((destination) => `<button type="button" onclick="moveRunnerFromBase('${base}','${destination}')">Vers ${destination === "home" ? "Marbre" : destination}</button>`).join("") : ""}
+        ${runnerId ? `<button type="button" onclick="removeRunnerFromBase('${base}')">Retirer</button>` : ""}
+        <button type="button" onclick="clearBase('${base}')">Vider la base</button>
+      </div>
+    </div>
+  `;
+  menu.classList.remove("hidden");
+}
+
+function closeBaseActionMenu() {
+  $("#baseActionMenu")?.classList.add("hidden");
+}
+
+function moveRunnerFromBase(base, destination) {
+  const game = getCurrentGame();
+  const fromKey = movementBaseKey(base);
+  const runnerId = game?.bases[fromKey];
+  if (!game || !runnerId) return;
+  const toKey = movementBaseKey(destination);
+  if (toKey && game.bases[toKey]) return showToast("Cette base est déjà occupée.", "warning");
+  snapshotGame(game);
+  game.bases[fromKey] = null;
+  if (destination === "home") scoreRun(game, runnerId, getBattingSide(game));
+  else game.bases[toKey] = runnerId;
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  closeBaseActionMenu();
+  renderAll();
+}
+
+function clearBase(base) {
+  const game = getCurrentGame();
+  if (!game) return;
+  snapshotGame(game);
+  game.bases[movementBaseKey(base)] = null;
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  closeBaseActionMenu();
+  renderAll();
+}
+
+function removeRunnerFromBase(base) {
+  const game = getCurrentGame();
+  if (!game?.bases[movementBaseKey(base)]) return;
+  snapshotGame(game);
+  game.bases[movementBaseKey(base)] = null;
+  addOuts(game, 1);
+  updateCurrentGame(game);
+  syncLiveGameState(game);
+  closeBaseActionMenu();
+  renderAll();
+  if (game.outs >= 3 && confirm("Trois retraits. Changer de demi-manche?")) endHalfInning(false);
+}
+
+function renderLastActionCard(game) {
+  const card = $("#lastActionCard");
+  if (!card) return;
+  const last = game?.playByPlay?.[0];
+  card.innerHTML = `
+    <p class="eyebrow">Dernière action</p>
+    <strong>${escapeHtml(last?.description || "Aucune action enregistrée")}</strong>
+    ${last ? `<span>${escapeHtml([last.result, last.defensePlay, last.runsScored ? `${last.runsScored} point${last.runsScored > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · "))}</span>` : ""}
+    <div class="last-action-buttons">
+      <button type="button" class="warning-btn" onclick="undoLastAction()">Annuler</button>
+      <button type="button" onclick="editLastAction()">Modifier l’action</button>
+    </div>
+  `;
 }
 
 function renderMatchScreen(game = getCurrentGame()) {
@@ -2470,6 +3275,8 @@ function createPlayByPlayEvent(game, actionInfo) {
     result: actionInfo.result || "",
     defensePlay: actionInfo.defensePlay || "",
     runsScored: Number(actionInfo.runsScored || 0),
+    runnerMovements: Array.isArray(actionInfo.runnerMovements) ? actionInfo.runnerMovements : [],
+    rbi: Number(actionInfo.rbi || 0),
     description: actionInfo.description || buildPlayByPlayDescription(actionInfo),
     createdAt: actionInfo.createdAt || new Date().toISOString()
   };
@@ -2480,6 +3287,9 @@ function createPlayByPlayEvent(game, actionInfo) {
 function buildPlayAnimation(actionInfo, game = null) {
   const result = String(actionInfo.result || "").toLowerCase();
   const code = actionInfo.defensePlay || "";
+  if (code === "K" || result.includes("3 prises")) {
+    return playAnimation("strikeout", actionInfo, [], [], actionInfo.description || "Retrait sur 3 prises", 2400);
+  }
   if (code) {
     const positions = code.replace(/^F/i, "").replace(/U$/i, "").split("-").map((item) => item.trim()).filter(Boolean);
     const isFly = /^F/i.test(code);
@@ -2774,9 +3584,40 @@ async function syncPendingLiveEvents(game) {
   }
 }
 
-function buildPlayByPlayDescription(actionInfo) {
+function buildPlayByPlayDescription(actionInfo, runnerMovements = actionInfo.runnerMovements || [], rbi = actionInfo.rbi || 0) {
+  runnerMovements = Array.isArray(runnerMovements) ? runnerMovements : [];
+  if (actionInfo.result === "Retrait sur 3 prises") {
+    return `${actionInfo.batter} : Retrait sur 3 prises.`;
+  }
+  if (runnerMovements.length) {
+    const movements = runnerMovements.map(normalizeRunnerMovement);
+    const scored = movements.filter((movement) => movement.to === "home");
+    const outs = movements.filter((movement) => movement.to === "out");
+    const runnersOut = outs.filter((movement) => !movement.isBatter);
+    const advanced = movements.filter((movement) => (
+      !movement.isBatter && !["home", "out", "stay"].includes(movement.to)
+    ));
+    const notes = [];
+    if ((actionInfo.result === "Choix défensif" || actionInfo.result === "Double jeu") && outs.length > 1) {
+      return `${actionInfo.batter} : Double jeu${actionInfo.defensePlay && !["FC", "DP"].includes(actionInfo.defensePlay) ? ` ${actionInfo.defensePlay}` : ""}.`;
+    }
+    if (scored.length > 1) notes.push(`${scored.length} points marqués`);
+    scored.slice(0, scored.length > 1 ? 0 : scored.length).forEach((movement) => notes.push(`${movement.runnerLabel} marque`));
+    if (!notes.length && advanced.length === 1) notes.push(`${actionInfo.result === "BB" ? "Coureur forcé" : "Coureur"} au ${advanced[0].to}`);
+    if (!notes.length && advanced.length > 1) notes.push(`${advanced.length} coureurs avancent`);
+    runnersOut.forEach((movement) => notes.push(buildRunnerOutDescription(movement)));
+    const batterOut = outs.find((movement) => movement.isBatter);
+    if (batterOut && actionInfo.result !== "Sacrifice") notes.push(buildRunnerOutDescription(batterOut));
+    if (rbi) notes.push(`${rbi} PP`);
+    return `${actionInfo.batter} : ${actionInfo.result}.${notes.length ? ` ${notes.join(". ")}.` : ""}`;
+  }
   const runs = actionInfo.runsScored > 0 ? `, ${actionInfo.runsScored} point${actionInfo.runsScored > 1 ? "s" : ""} marqué${actionInfo.runsScored > 1 ? "s" : ""}` : "";
   return `${actionInfo.batter} : ${actionInfo.result}${actionInfo.defensePlay ? ` ${actionInfo.defensePlay}` : ""}${runs}`;
+}
+
+function buildRunnerOutDescription(movement) {
+  const label = movement.isBatter ? "Frappeur" : movement.runnerLabel;
+  return `${label} retiré${movement.outAt ? ` au ${movement.outAt === "home" ? "marbre" : movement.outAt}` : ""}`;
 }
 
 function liveResultLabel(action) {
@@ -2787,7 +3628,11 @@ function liveResultLabel(action) {
     hr: "Circuit",
     bb: "BB",
     out: "Retrait",
+    strikeout: "Retrait sur 3 prises",
     error: "Erreur",
+    fielderschoice: "Choix défensif",
+    doubleplay: "Double jeu",
+    runnerout: "Balle en jeu",
     sacrifice: "Sacrifice"
   }[action] || action;
 }
@@ -3136,6 +3981,7 @@ function calculateStatsForSide(game, side) {
     stat.triple += atBat.triple || 0;
     stat.hr += atBat.hr || 0;
     stat.bb += atBat.bb || 0;
+    stat.strikeout += atBat.strikeout || 0;
     stat.rbi += atBat.rbi || 0;
     stat.run += atBat.run || 0;
   });
@@ -3156,6 +4002,7 @@ function emptyStat(playerId) {
     triple: 0,
     hr: 0,
     bb: 0,
+    strikeout: 0,
     rbi: 0,
     run: 0,
     avg: ".000"
@@ -3177,7 +4024,7 @@ function renderStats() {
 
   $("#statsBody").innerHTML = renderStatsRows(stats, "team");
   $("#opponentStatsSection").classList.toggle("hidden", !game || game.opponentTrackingMode !== "complete");
-  $("#opponentStatsBody").innerHTML = opponentStats.length ? renderStatsRows(opponentStats, "opponent") : `<tr><td colspan="11">Aucune statistique adverse.</td></tr>`;
+  $("#opponentStatsBody").innerHTML = opponentStats.length ? renderStatsRows(opponentStats, "opponent") : `<tr><td colspan="12">Aucune statistique adverse.</td></tr>`;
 }
 
 function renderStatsRows(stats, side) {
@@ -3186,7 +4033,7 @@ function renderStatsRows(stats, side) {
     <tr>
       <td>${escapeHtml(statPlayerName(stat.playerId, side))}</td>
       <td>${stat.ab}</td><td>${stat.hit}</td><td>${stat.single}</td><td>${stat.double}</td>
-      <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.rbi}</td>
+      <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.strikeout}</td><td>${stat.rbi}</td>
       <td>${stat.run}</td><td class="avg-cell">${stat.avg}</td>
     </tr>
   `).join("");
@@ -3196,12 +4043,12 @@ function renderStatsRows(stats, side) {
     <tr class="total-row">
       <td>${totalLabel}</td>
       <td>${totals.ab}</td><td>${totals.hit}</td><td>${totals.single}</td><td>${totals.double}</td>
-      <td>${totals.triple}</td><td>${totals.hr}</td><td>${totals.bb}</td><td>${totals.rbi}</td>
+      <td>${totals.triple}</td><td>${totals.hr}</td><td>${totals.bb}</td><td>${totals.strikeout}</td><td>${totals.rbi}</td>
       <td>${totals.run}</td><td class="avg-cell">${formatAverage(totals.hit, totals.ab)}</td>
     </tr>
   ` : "";
 
-  return stats.length ? `${rows}${totalRow}` : `<tr><td colspan="11">Aucune statistique disponible.</td></tr>`;
+  return stats.length ? `${rows}${totalRow}` : `<tr><td colspan="12">Aucune statistique disponible.</td></tr>`;
 }
 
 function getStatsTotals(stats) {
@@ -3213,10 +4060,11 @@ function getStatsTotals(stats) {
     totals.triple += stat.triple;
     totals.hr += stat.hr;
     totals.bb += stat.bb;
+    totals.strikeout += stat.strikeout;
     totals.rbi += stat.rbi;
     totals.run += stat.run;
     return totals;
-  }, { ab: 0, hit: 0, single: 0, double: 0, triple: 0, hr: 0, bb: 0, rbi: 0, run: 0 });
+  }, { ab: 0, hit: 0, single: 0, double: 0, triple: 0, hr: 0, bb: 0, strikeout: 0, rbi: 0, run: 0 });
 }
 
 function formatAverage(hit, ab) {
@@ -3315,7 +4163,7 @@ function renderAtBatsReportSection(title, atBats, side, game) {
 function statsTable(rows) {
   return `
     <table>
-      <thead><tr><th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>PP</th><th>P</th><th>MOY</th></tr></thead>
+      <thead><tr><th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
@@ -4196,7 +5044,11 @@ function resultLabel(action) {
     hr: "Circuit",
     bb: "BB",
     out: "Retrait",
+    strikeout: "K",
     error: "Erreur",
+    fielderschoice: "FC",
+    doubleplay: "DP",
+    runnerout: "Balle en jeu",
     sacrifice: "Sacrifice"
   };
   return labels[action] || action;

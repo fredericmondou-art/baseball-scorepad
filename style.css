@@ -2415,6 +2415,216 @@ textarea {
   max-width: 980px;
 }
 
+.runner-movement-modal,
+.edit-runners-modal {
+  max-width: 980px;
+}
+
+.runner-action-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.runner-action-summary strong {
+  font-size: 22px;
+}
+
+.runner-outs-summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid rgba(180, 35, 24, 0.18);
+  border-radius: var(--radius);
+  background: #fff4f2;
+  color: var(--danger);
+  font-weight: 900;
+}
+
+.runner-movement-list,
+.edit-runners-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.runner-movement-row,
+.edit-runner-row {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.runner-movement-row {
+  grid-template-columns: minmax(180px, 1fr) minmax(280px, 1.4fr);
+  align-items: center;
+}
+
+.runner-movement-player {
+  display: grid;
+  gap: 5px;
+}
+
+.runner-movement-player strong {
+  font-size: 20px;
+}
+
+.runner-movement-player span,
+.runner-destination-label,
+.edit-runner-row span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.runner-destination-group {
+  display: grid;
+  gap: 9px;
+}
+
+.runner-destination-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.runner-destination-options input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.runner-destination-options label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 64px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #eef3f7;
+  color: var(--sport-blue);
+  cursor: pointer;
+}
+
+.runner-destination-options label:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.runner-out-at {
+  max-width: 240px;
+  color: var(--danger);
+}
+
+.out-options-modal {
+  max-width: 760px;
+}
+
+.out-options-grid,
+.mobile-more-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.out-options-grid button {
+  min-height: 76px;
+  text-align: left;
+}
+
+.mobile-scorer-tabs,
+.mobile-quick-action-bar,
+.mobile-more-actions-panel,
+.base-action-menu,
+.mobile-situation-field {
+  display: none;
+}
+
+.last-action-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.last-action-card strong {
+  line-height: 1.3;
+}
+
+.last-action-card span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.last-action-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.runner-rbi-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-tint);
+}
+
+.runner-rbi-panel label {
+  max-width: 360px;
+}
+
+.form-error {
+  min-height: 24px;
+  margin: 0;
+  color: var(--danger);
+  font-weight: 900;
+}
+
+.runner-modal-actions {
+  grid-template-columns: 1.2fr 1fr;
+}
+
+.edit-runner-row {
+  grid-template-columns: 74px minmax(220px, 1fr);
+  align-items: end;
+}
+
+.edit-runner-row strong {
+  align-self: center;
+  font-size: 24px;
+  color: var(--primary-dark);
+}
+
+.edit-runner-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr);
+  gap: 10px;
+}
+
+.edit-runner-controls .hidden {
+  display: none;
+}
+
 .add-batter-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2492,7 +2702,8 @@ textarea {
   .calendar-item,
   .upcoming-item,
   .defensive-modal-grid,
-  .add-batter-grid {
+  .add-batter-grid,
+  .runner-movement-row {
     grid-template-columns: 1fr;
   }
 
@@ -2574,6 +2785,192 @@ textarea {
 @media (max-width: 720px) {
   body {
     font-size: 16px;
+    padding-bottom: 88px;
+  }
+
+  #screen-live {
+    overflow-x: clip;
+  }
+
+  #liveLayout {
+    gap: 10px;
+  }
+
+  .mobile-scorer-tabs {
+    position: sticky;
+    top: 100px;
+    z-index: 8;
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(255,255,255,0.96);
+  }
+
+  .mobile-scorer-tabs button {
+    min-height: 42px;
+    padding: 8px;
+  }
+
+  .mobile-scorer-tabs button.active {
+    background: var(--sport-blue);
+    color: #fff;
+  }
+
+  #liveLayout[data-mobile-tab="situation"] .field-card,
+  #liveLayout[data-mobile-tab="situation"] .actions-panel,
+  #liveLayout[data-mobile-tab="scoring"] .live-panel,
+  #liveLayout[data-mobile-tab="scoring"] .field-card,
+  #liveLayout[data-mobile-tab="history"] .live-panel,
+  #liveLayout[data-mobile-tab="history"] .actions-panel {
+    display: none;
+  }
+
+  #liveLayout[data-mobile-tab="history"] .field-card .field-heading,
+  #liveLayout[data-mobile-tab="history"] .field-card .diamond {
+    display: none;
+  }
+
+  #liveLayout[data-mobile-tab="situation"] .live-broadcast-panel {
+    display: none;
+  }
+
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(2),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(3),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(4),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(5),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(6),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(14),
+  #liveLayout[data-mobile-tab="situation"] #liveInfo .game-card:nth-child(15) {
+    display: none;
+  }
+
+  .mobile-situation-field {
+    display: block;
+    margin-top: 10px;
+  }
+
+  .compact-interactive-field {
+    position: relative;
+    min-height: 250px;
+    border: 1px solid #9eb4a9;
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, #5aa765, #b98857);
+    overflow: hidden;
+  }
+
+  .compact-interactive-field::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 55%;
+    width: 134px;
+    height: 134px;
+    transform: translate(-50%, -50%) rotate(45deg);
+    border: 2px solid rgba(255,255,255,0.65);
+    background: rgba(188,133,82,0.56);
+  }
+
+  .compact-base {
+    position: absolute;
+    z-index: 1;
+    display: grid;
+    gap: 2px;
+    width: 92px;
+    min-height: 60px;
+    padding: 8px;
+    border: 2px solid #fff;
+    background: rgba(255,255,255,0.94);
+    color: var(--text);
+    line-height: 1.1;
+  }
+
+  .compact-base span {
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
+
+  .compact-2b { left: 50%; top: 18px; transform: translateX(-50%); }
+  .compact-3b { left: 12px; top: 98px; }
+  .compact-1b { right: 12px; top: 98px; }
+  .compact-home { left: 50%; bottom: 12px; transform: translateX(-50%); }
+
+  .mobile-quick-action-bar {
+    position: fixed;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    z-index: 24;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 5px;
+    padding: 7px;
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 12px;
+    background: rgba(18,32,44,0.96);
+    box-shadow: var(--shadow);
+  }
+
+  .mobile-quick-action-bar button {
+    min-height: 50px;
+    padding: 7px 3px;
+    font-size: 13px;
+  }
+
+  .mobile-more-actions-panel,
+  .base-action-menu {
+    position: fixed;
+    inset: auto 8px 78px;
+    z-index: 25;
+    display: block;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 22px 60px rgba(0,0,0,0.28);
+  }
+
+  .mobile-more-actions-panel.hidden,
+  .base-action-menu.hidden {
+    display: none;
+  }
+
+  .mobile-more-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .mobile-more-title button {
+    min-height: 38px;
+    padding: 7px 10px;
+  }
+
+  .mobile-more-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-more-grid button {
+    min-height: 48px;
+    padding: 8px;
+  }
+
+  .field-card .last-action-card {
+    order: -1;
+  }
+
+  .edit-runner-row,
+  .edit-runner-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .runner-destination-options label {
+    flex: 1 1 88px;
   }
 
   .spectator-root {
