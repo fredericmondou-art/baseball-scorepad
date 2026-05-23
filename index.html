@@ -113,6 +113,7 @@
       </div>
       <div id="homeTopGrid" class="home-dashboard-grid"></div>
       <div id="homeUpcoming" class="home-upcoming"></div>
+      <div id="homeRecentGames" class="home-upcoming"></div>
       <div id="homeQuickActions" class="quick-actions-grid"></div>
     </section>
 
@@ -511,13 +512,14 @@
       <div class="section-tabs stats-view-tabs">
         <button type="button" class="stats-view-btn active" data-stats-view="season">Stats cumulées</button>
         <button type="button" class="stats-view-btn" data-stats-view="current">Match actuel</button>
+        <button type="button" class="stats-view-btn" data-stats-view="recent">Derniers matchs</button>
       </div>
       <div class="section-tabs"><span class="mini-badge team-badge">Notre équipe</span></div>
       <div class="card table-wrap stats-table-card">
         <table>
           <thead>
             <tr>
-              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th>
+              <th>Joueur</th><th>MJ</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th><th>OBP</th><th>SLG</th><th>OPS</th>
             </tr>
           </thead>
           <tbody id="statsBody"></tbody>
@@ -529,13 +531,14 @@
           <table>
             <thead>
               <tr>
-                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th>
+                <th>Joueur</th><th>MJ</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th><th>OBP</th><th>SLG</th><th>OPS</th>
               </tr>
             </thead>
             <tbody id="opponentStatsBody"></tbody>
           </table>
         </div>
       </div>
+      <div id="recentStatsView" class="stats-block hidden"></div>
     </section>
 
     <section id="screen-report" class="screen">
@@ -580,6 +583,7 @@
           </div>
           <p id="appVersionText" class="app-version-text">Version : chargement...</p>
           <div class="settings-actions">
+            <button id="loadCloudGamesBtn" type="button" class="primary-btn wide">Charger les matchs cloud</button>
             <button id="forceAppUpdateBtn" type="button" class="warning-btn wide">Forcer la mise Ã  jour</button>
             <button id="exportDataBtn" class="secondary-btn">Exporter JSON</button>
             <label class="import-label">

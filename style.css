@@ -434,6 +434,31 @@ main {
   margin-top: 14px;
 }
 
+.recent-games-list,
+.stats-recent-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recent-stats-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.recent-stats-card h3,
+.recent-stats-card p {
+  margin: 0;
+}
+
+.recent-stats-card p {
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .wide-dashboard-card {
   gap: 14px;
 }
