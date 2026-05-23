@@ -1,4 +1,6 @@
 const STORAGE_KEY = "baseballScorepadData";
+const APP_VERSION_FALLBACK = "2026-05-23-v1";
+const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
 const TEAM_BRANDING = {
@@ -66,6 +68,8 @@ let appData = {
 };
 
 let pwaReady = false;
+let appVersion = APP_VERSION_FALLBACK;
+let remoteAppVersion = APP_VERSION_FALLBACK;
 let defensiveOutState = {
   type: "fly",
   positions: []
@@ -125,6 +129,7 @@ function initApp() {
   fillQuickBatterPositionSelect();
   setDefaultGameDate();
   renderAll();
+  checkForAppUpdate();
   if (resumeId) handleResumeParamOnLoad(resumeId);
 }
 
@@ -204,6 +209,7 @@ function setupForms() {
   $("#oppPlusBtn").addEventListener("click", () => adjustOpponentScore(1));
   $("#oppMinusBtn").addEventListener("click", () => adjustOpponentScore(-1));
   $("#printBtn").addEventListener("click", () => window.print());
+  $("#forceAppUpdateBtn")?.addEventListener("click", forceAppUpdate);
   $("#resetDataBtn").addEventListener("click", resetAllData);
   $("#exportDataBtn").addEventListener("click", exportData);
   $("#importDataInput").addEventListener("change", importData);
@@ -330,6 +336,85 @@ function registerServiceWorker() {
         showToast("PWA non disponible avec ce mode d'ouverture.", "warning");
       });
   });
+}
+
+async function getAppVersion() {
+  try {
+    const response = await fetch(`./version.json?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Version fetch failed");
+    const versionInfo = await response.json();
+    remoteAppVersion = versionInfo.version || APP_VERSION_FALLBACK;
+    appVersion = remoteAppVersion;
+    renderAppVersion(versionInfo);
+    return versionInfo;
+  } catch (error) {
+    appVersion = localStorage.getItem(APP_VERSION_STORAGE_KEY) || APP_VERSION_FALLBACK;
+    renderAppVersion({ version: appVersion, updatedAt: "" });
+    return { version: appVersion, updatedAt: "" };
+  }
+}
+
+async function checkForAppUpdate() {
+  const previousVersion = localStorage.getItem(APP_VERSION_STORAGE_KEY);
+  const versionInfo = await getAppVersion();
+  const currentVersion = versionInfo.version || APP_VERSION_FALLBACK;
+  if (previousVersion && previousVersion !== currentVersion) {
+    showUpdateAvailableBanner(currentVersion);
+  } else {
+    localStorage.setItem(APP_VERSION_STORAGE_KEY, currentVersion);
+  }
+}
+
+function renderAppVersion(versionInfo = { version: appVersion, updatedAt: "" }) {
+  const versionText = versionInfo.updatedAt
+    ? `Version : ${versionInfo.version} · ${versionInfo.updatedAt}`
+    : `Version : ${versionInfo.version || APP_VERSION_FALLBACK}`;
+  if ($("#appVersionText")) $("#appVersionText").textContent = versionText;
+}
+
+function showUpdateAvailableBanner(version) {
+  let banner = $("#appUpdateBanner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "appUpdateBanner";
+    banner.className = "app-update-banner";
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = `
+    <span>Nouvelle version disponible : ${escapeHtml(version)}</span>
+    <button type="button" onclick="applyAppUpdate()">Mettre à jour</button>
+    <button type="button" class="secondary-btn" onclick="dismissAppUpdateBanner()">Plus tard</button>
+  `;
+  banner.classList.add("visible");
+}
+
+function dismissAppUpdateBanner() {
+  $("#appUpdateBanner")?.classList.remove("visible");
+}
+
+async function clearAppCachesAndServiceWorkers() {
+  if ("caches" in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  }
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+}
+
+async function applyAppUpdate() {
+  localStorage.setItem(APP_VERSION_STORAGE_KEY, remoteAppVersion || appVersion || APP_VERSION_FALLBACK);
+  await clearAppCachesAndServiceWorkers();
+  window.location.reload();
+}
+
+async function forceAppUpdate() {
+  const confirmed = confirm("Cette action va vider le cache de l'application et recharger la dernière version. Vos données locales peuvent rester dans localStorage, mais assurez-vous que la sauvegarde cloud est active.");
+  if (!confirmed) return;
+  await clearAppCachesAndServiceWorkers();
+  showToast("Cache vidé. Rechargement de la dernière version.", "success");
+  window.location.reload();
 }
 
 function updateOfflineStatus() {
@@ -4592,6 +4677,7 @@ function renderSettings() {
   $("#teamNameInput").value = appData.team.name;
   const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || ""]).size;
   $("#storageState").textContent = `Sauvegarde active dans ce navigateur. Taille approximative : ${bytes} octets.`;
+  renderAppVersion({ version: appVersion || APP_VERSION_FALLBACK, updatedAt: "" });
 }
 
 function renderAll() {
