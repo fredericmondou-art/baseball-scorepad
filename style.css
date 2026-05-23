@@ -1415,6 +1415,23 @@ textarea {
   margin: 10px 0;
 }
 
+.stats-view-tabs {
+  flex-wrap: wrap;
+}
+
+.stats-view-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--sport-blue);
+  font-weight: 900;
+}
+
+.stats-view-btn.active {
+  background: var(--sport-blue);
+  border-color: var(--sport-blue);
+  color: #fff;
+}
+
 .stats-block {
   margin-top: 18px;
 }
@@ -2888,7 +2905,8 @@ textarea {
   }
 
   .mobile-score-meta-grid span,
-  .mobile-game-scoreboard p {
+  .mobile-game-scoreboard p,
+  .mobile-batter-summary span {
     margin: 0;
     padding: 8px;
     border-radius: var(--radius);
@@ -2898,12 +2916,20 @@ textarea {
     font-weight: 900;
   }
 
+  .mobile-batter-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+    gap: 7px;
+  }
+
   .mobile-score-meta-grid strong,
-  .mobile-game-scoreboard p strong {
+  .mobile-game-scoreboard p strong,
+  .mobile-batter-summary strong {
     display: block;
     margin-top: 3px;
     color: #fff;
     font-size: 15px;
+    overflow-wrap: anywhere;
   }
 
   .mobile-situation-field {

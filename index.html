@@ -508,12 +508,16 @@
         </div>
       </div>
       <div id="statsSummary" class="stats-summary"></div>
+      <div class="section-tabs stats-view-tabs">
+        <button type="button" class="stats-view-btn active" data-stats-view="season">Stats cumulées</button>
+        <button type="button" class="stats-view-btn" data-stats-view="current">Match actuel</button>
+      </div>
       <div class="section-tabs"><span class="mini-badge team-badge">Notre équipe</span></div>
       <div class="card table-wrap stats-table-card">
         <table>
           <thead>
             <tr>
-              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th>
+              <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th>
             </tr>
           </thead>
           <tbody id="statsBody"></tbody>
@@ -525,7 +529,7 @@
           <table>
             <thead>
               <tr>
-                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th>
+                <th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th>
               </tr>
             </thead>
             <tbody id="opponentStatsBody"></tbody>

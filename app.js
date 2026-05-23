@@ -77,7 +77,9 @@ let addBatterState = {
 let pendingAction = null;
 let pendingRunnerMovementAction = null;
 let activeMobileScorerTab = "situation";
+let activeStatsView = "season";
 let supabaseClient = null;
+let cloudGameSubscription = null;
 let spectatorMode = false;
 let spectatorGameState = null;
 let spectatorPlayByPlay = [];
@@ -123,7 +125,7 @@ function initApp() {
   fillQuickBatterPositionSelect();
   setDefaultGameDate();
   renderAll();
-  if (resumeId) loadGameFromCloud(resumeId);
+  if (resumeId) handleResumeParamOnLoad(resumeId);
 }
 
 function setupNavigation() {
@@ -214,6 +216,12 @@ function setupForms() {
   $("#calendarRunLimitEnabled").addEventListener("change", renderCalendarRunLimitSettings);
   $("#opponentTrackingMode").addEventListener("change", renderLineupModeSettings);
   $("#lineupExpectedSettings").addEventListener("change", updateExpectedLineupCountsFromLineupScreen);
+  $$(".stats-view-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeStatsView = button.dataset.statsView || "season";
+      renderStats();
+    });
+  });
 }
 
 function setupLiveActions() {
@@ -349,6 +357,32 @@ function updateOfflineStatus() {
 
 function saveData() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+}
+
+function saveLocalData() {
+  saveData();
+}
+
+function saveGameEverywhere(game, options = {}) {
+  if (!game) return;
+  const {
+    syncLive = false,
+    playEvent = null,
+    publishPlayByPlay = Boolean(playEvent),
+    cloud = true
+  } = options;
+  saveLocalData();
+  if (syncLive) syncLiveGameState(game);
+  if (publishPlayByPlay && playEvent) publishPlayByPlayEvent(game, playEvent);
+  if (cloud) scheduleCloudSave(game);
+  updateSyncStatusUI(game);
+}
+
+function updateSyncStatusUI(game = getCurrentGame()) {
+  if (!game) return;
+  if ($("#liveBroadcastPanel") && getCurrentGame()?.id === game.id) renderLiveBroadcastPanel(game);
+  if ($("#mobileSituationDetails") && getCurrentGame()?.id === game.id) renderMobileSituationDetails(game);
+  if ($("#screen-stats")?.classList.contains("active")) renderStats();
 }
 
 function loadData() {
@@ -574,13 +608,12 @@ function getCurrentGame() {
   return appData.games.find((game) => game.id === appData.currentGameId) || null;
 }
 
-function updateCurrentGame(updatedGame) {
+function updateCurrentGame(updatedGame, options = {}) {
   const index = appData.games.findIndex((game) => game.id === updatedGame.id);
   if (index >= 0) {
     const normalized = normalizeGame(updatedGame);
     appData.games[index] = normalized;
-    saveData();
-    scheduleCloudSave(normalized);
+    saveGameEverywhere(normalized, options);
   }
 }
 
@@ -929,8 +962,7 @@ function createGameFromCalendarEvent(eventId) {
   appData.currentGameId = game.id;
   event.linkedGameId = game.id;
   event.status = "Partie créée";
-  saveData();
-  scheduleCloudSave(game);
+  saveGameEverywhere(game);
   openLineupForCurrentGame();
   showToast("Partie créée depuis le calendrier.", "success");
 }
@@ -1041,8 +1073,7 @@ function createGame(event) {
 
   appData.games.push(game);
   appData.currentGameId = game.id;
-  saveData();
-  scheduleCloudSave(game);
+  saveGameEverywhere(game);
   event.target.reset();
   setDefaultGameDate();
   $("#gameHomeAway").value = "local";
@@ -1186,8 +1217,7 @@ function startCurrentGame() {
   game.outs = 0;
   game.bases = { first: null, second: null, third: null };
   game.currentBattingSide = getBattingSide(game);
-  updateCurrentGame(game);
-  syncLiveGameState(game);
+  updateCurrentGame(game, { syncLive: true });
   showScreen("live");
   showToast(game.lineupMode === "dynamic" ? "Partie démarrée. L'alignement sera construit pendant la partie." : "Partie démarrée.", "success");
 }
@@ -2036,9 +2066,7 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false, confir
   game.liveLastAction = playEvent.description;
   getAtBatList(game, side).push(atBat);
   advanceBatterIndex(game, side);
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  publishPlayByPlayEvent(game, playEvent);
+  updateCurrentGame(game, { syncLive: true, playEvent });
   renderAll();
   playGameAnimation(playEvent.animation);
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
@@ -2561,8 +2589,7 @@ function applyManualBaseEdit() {
   }
   snapshotGame(game);
   game.bases = nextBases;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
+  updateCurrentGame(game, { syncLive: true });
   closeEditRunnersModal();
   renderAll();
   showToast("Coureurs mis à jour.", "success");
@@ -2774,9 +2801,7 @@ function endHalfInning(shouldSnapshot) {
   game.playByPlay.unshift(playEvent);
   game.playByPlay = game.playByPlay.slice(0, 120);
   game.liveLastAction = playEvent.description;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  publishPlayByPlayEvent(game, playEvent);
+  updateCurrentGame(game, { syncLive: true, playEvent });
   renderAll();
   playGameAnimation(playEvent.animation);
   showToast("Demi-manche changée.", "info");
@@ -2808,9 +2833,7 @@ function adjustOpponentScore(delta) {
     game.playByPlay = game.playByPlay.slice(0, 120);
     game.liveLastAction = playEvent.description;
   }
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  if (playEvent) publishPlayByPlayEvent(game, playEvent);
+  updateCurrentGame(game, { syncLive: true, playEvent });
   renderAll();
   if (playEvent) playGameAnimation(playEvent.animation);
   showToast("Score adverse ajusté.", "info");
@@ -2843,10 +2866,7 @@ function finishGame() {
   game.playByPlay.unshift(playEvent);
   game.playByPlay = game.playByPlay.slice(0, 120);
   game.liveLastAction = playEvent.description;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
-  publishPlayByPlayEvent(game, playEvent);
-  saveData();
+  updateCurrentGame(game, { syncLive: true, playEvent });
   renderAll();
   showToast("Partie terminée.", "success");
 }
@@ -2985,6 +3005,7 @@ function renderLive() {
 function renderMobileGameScoreboard(game) {
   const scoreboard = $("#liveScoreboard");
   if (!scoreboard || !game) return;
+  const batterSummary = renderCurrentBatterSummary(game);
   scoreboard.innerHTML += `
     <div class="mobile-game-scoreboard">
       <div class="mobile-score-line"><span>${escapeHtml(appData.team.name)}</span><strong>${game.scoreTeam}</strong></div>
@@ -2993,7 +3014,11 @@ function renderMobileGameScoreboard(game) {
         <span>Manche <strong>${escapeHtml(formatHalfInningSummary(game))}</strong></span>
         <span>Retraits <strong>${game.outs} / 3</strong></span>
       </div>
-      <p>Prochain frappeur <strong>${escapeHtml(getNextBatterLabel(game))}</strong></p>
+      <p>Frappeur <strong>${escapeHtml(batterSummary.label)}</strong></p>
+      <div class="mobile-batter-summary">
+        <span>Moyenne <strong>${escapeHtml(batterSummary.average)}</strong></span>
+        <span>Match <strong>${escapeHtml(batterSummary.gameAtBats)}</strong></span>
+      </div>
     </div>
   `;
 }
@@ -3008,6 +3033,33 @@ function getCurrentBatterLabel(game) {
   const side = getBattingSide(game);
   const batter = getCurrentBatter(game);
   return batter ? displayBatterName(batter, side, game) : "À confirmer";
+}
+
+function renderCurrentBatterSummary(game) {
+  const side = getBattingSide(game);
+  const batter = getCurrentBatter(game);
+  const batterId = side === "opponent" ? batter?.id : batter?.id;
+  return {
+    label: batter ? displayBatterName(batter, side, game) : "À confirmer",
+    average: batter && side === "team" ? getPlayerCumulativeAverage(batterId) : "—",
+    gameAtBats: batter ? formatCurrentBatterGameAtBats(game, batterId, side) : "Aucune apparition"
+  };
+}
+
+function getPlayerCumulativeAverage(playerId) {
+  const stat = calculatePlayerSeasonStats(playerId);
+  return formatBattingAverage(stat.ab ? stat.hit / stat.ab : 0, stat.ab);
+}
+
+function getCurrentBatterGameAtBats(game, batterId, side = getBattingSide(game)) {
+  if (!game || !batterId) return [];
+  return getAtBatList(game, side).filter((atBat) => atBat.playerId === batterId);
+}
+
+function formatCurrentBatterGameAtBats(game, batterId, side) {
+  const appearances = getCurrentBatterGameAtBats(game, batterId, side);
+  if (!appearances.length) return "Aucune apparition";
+  return appearances.slice(-4).map((atBat) => atBat.result || "-").join(", ");
 }
 
 function getBattingSideLabel(game) {
@@ -3171,8 +3223,7 @@ function moveRunnerFromBase(base, destination) {
   game.bases[fromKey] = null;
   if (destination === "home") scoreRun(game, runnerId, getBattingSide(game));
   else game.bases[toKey] = runnerId;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
+  updateCurrentGame(game, { syncLive: true });
   closeBaseActionMenu();
   renderAll();
 }
@@ -3182,8 +3233,7 @@ function clearBase(base) {
   if (!game) return;
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
-  updateCurrentGame(game);
-  syncLiveGameState(game);
+  updateCurrentGame(game, { syncLive: true });
   closeBaseActionMenu();
   renderAll();
 }
@@ -3194,8 +3244,7 @@ function removeRunnerFromBase(base) {
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
   addOuts(game, 1);
-  updateCurrentGame(game);
-  syncLiveGameState(game);
+  updateCurrentGame(game, { syncLive: true });
   closeBaseActionMenu();
   renderAll();
   if (game.outs >= 3 && confirm("Trois retraits. Changer de demi-manche?")) endHalfInning(false);
@@ -3762,6 +3811,8 @@ function renderLiveBroadcastPanel(game) {
       <div class="home-card-actions">
         <button onclick="copyResumeCode()">Copier le code</button>
         <button onclick="copyResumeShareLink()">Copier le lien de reprise</button>
+        <button onclick="refreshCurrentGameFromCloud()">Rafraîchir depuis le cloud</button>
+        <button onclick="subscribeToCurrentCloudGame()">Sync temps réel marqueur</button>
         <button class="primary-btn" onclick="syncFullGameToCloud(getCurrentGame())">Synchroniser cloud</button>
       </div>
     </div>
@@ -3797,9 +3848,8 @@ function enableLiveBroadcast() {
   if (!game) return showToast("Aucune partie active.", "warning");
   game.liveEnabled = true;
   ensureLiveShareFields(game);
-  updateCurrentGame(game);
+  updateCurrentGame(game, { syncLive: true });
   renderAll();
-  syncLiveGameState(game);
   syncPendingLiveEvents(game);
   syncFullGameToCloud(game);
   showToast("Diffusion live activée.", "success");
@@ -3853,12 +3903,26 @@ function copyResumeShareLink() {
   copyTextToClipboard(getResumeShareUrl(game), "Lien de reprise copié.");
 }
 
+function handleResumeParamOnLoad(publicGameId) {
+  if (!publicGameId) return;
+  loadGameFromCloud(publicGameId);
+}
+
 function cloudSaveStatusLabel(game) {
   if (!navigator.onLine) return "Hors ligne — sauvegarde locale active";
-  if (game.pendingCloudSave || game.cloudSaveStatus === "pending") return "Sauvegarde cloud en attente";
+  if (game.cloudSaveStatus === "error" || game.cloudSaveStatus === "offline") return "Erreur cloud — sauvegarde locale active";
+  if (game.pendingCloudSave || game.cloudSaveStatus === "pending") return "Sauvegarde cloud en cours...";
+  if (game.cloudSaveStatus === "synced") return `Cloud à jour${game.cloudUpdatedAt ? ` · ${formatCloudSaveTime(game.cloudUpdatedAt)}` : ""}`;
+  if (game.cloudSaveStatus === "offline") return "Erreur cloud — sauvegarde locale active";
   if (game.cloudSaveStatus === "synced") return "Sauvegarde cloud à jour";
   if (!supabaseClient) return "Cloud non disponible";
   return "Sauvegarde cloud locale";
+}
+
+function formatCloudSaveTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
 }
 
 function setCloudSaveState(gameId, status, pending = false, updatedAt = null) {
@@ -3918,7 +3982,7 @@ async function syncFullGameToCloud(game) {
     return true;
   } catch (error) {
     console.warn("Cloud game sync failed", error);
-    setCloudSaveState(game.id, "pending", true);
+    setCloudSaveState(game.id, "error", true);
     return false;
   }
 }
@@ -3926,8 +3990,105 @@ async function syncFullGameToCloud(game) {
 function syncPendingCloudSaves() {
   if (!supabaseClient || !navigator.onLine) return;
   appData.games
-    .filter((game) => game.pendingCloudSave || game.cloudSaveStatus === "pending" || game.cloudSaveStatus === "offline")
+    .filter((game) => game.pendingCloudSave || ["pending", "offline", "error"].includes(game.cloudSaveStatus))
     .forEach((game) => syncFullGameToCloud(game));
+}
+
+async function fetchCloudGameByPublicId(publicGameId) {
+  const code = String(publicGameId || "").trim().toUpperCase();
+  if (!code) throw new Error("missing_public_game_id");
+  const { data, error } = await supabaseClient
+    .from("saved_games_cloud")
+    .select("*")
+    .eq("public_game_id", code)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.game_data) return null;
+  return {
+    cloudGame: normalizeGame({
+      ...data.game_data,
+      publicGameId: code,
+      cloudSaveStatus: "synced",
+      pendingCloudSave: false,
+      cloudUpdatedAt: data.updated_at || data.game_data.cloudUpdatedAt || null
+    }),
+    updatedAt: data.updated_at || data.game_data.cloudUpdatedAt || null
+  };
+}
+
+function mergeOrReplaceLocalGameWithCloud(cloudGame) {
+  if (!cloudGame) return null;
+  const normalized = normalizeGame(cloudGame);
+  const existingIndex = appData.games.findIndex((game) => game.publicGameId === normalized.publicGameId || game.id === normalized.id);
+  if (existingIndex >= 0) appData.games[existingIndex] = normalized;
+  else appData.games.push(normalized);
+  appData.currentGameId = normalized.id;
+  saveData();
+  renderAll();
+  return normalized;
+}
+
+async function refreshCurrentGameFromCloud() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie active.", "warning");
+  const code = ensurePublicGameId(game);
+  if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
+  if (!navigator.onLine) return showToast("Connexion requise pour rafraîchir depuis le cloud.", "warning");
+
+  try {
+    const cloudRecord = await fetchCloudGameByPublicId(code);
+    if (!cloudRecord) return showToast("Aucune version cloud trouvée pour cette partie.", "warning");
+    const localUpdated = game.cloudUpdatedAt ? new Date(game.cloudUpdatedAt).getTime() : 0;
+    const cloudUpdated = cloudRecord.updatedAt ? new Date(cloudRecord.updatedAt).getTime() : 0;
+    if (localUpdated && cloudUpdated && localUpdated >= cloudUpdated) {
+      return showToast("Votre version locale est déjà à jour ou plus récente.", "info");
+    }
+    const shouldReplace = confirm("Remplacer la version locale par la version cloud la plus récente ?");
+    if (!shouldReplace) return showToast("Version locale conservée.", "info");
+    mergeOrReplaceLocalGameWithCloud(cloudRecord.cloudGame);
+    showScreen("live");
+    showToast("Partie rafraîchie depuis le cloud.", "success");
+  } catch (error) {
+    console.warn("Cloud refresh failed", error);
+    showToast("Impossible de rafraîchir depuis le cloud.", "error");
+  }
+}
+
+function subscribeToCloudGame(publicGameId) {
+  const code = String(publicGameId || "").trim().toUpperCase();
+  if (!code) return showToast("Aucune partie active à synchroniser.", "warning");
+  if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
+  if (cloudGameSubscription) supabaseClient.removeChannel(cloudGameSubscription);
+  cloudGameSubscription = supabaseClient
+    .channel(`saved-game-${code}`)
+    .on("postgres_changes", {
+      event: "UPDATE",
+      schema: "public",
+      table: "saved_games_cloud",
+      filter: `public_game_id=eq.${code}`
+    }, (payload) => {
+      if (!payload?.new?.game_data) return;
+      const cloudGame = normalizeGame({
+        ...payload.new.game_data,
+        publicGameId: code,
+        cloudSaveStatus: "synced",
+        pendingCloudSave: false,
+        cloudUpdatedAt: payload.new.updated_at || payload.new.game_data.cloudUpdatedAt || null
+      });
+      const shouldLoad = confirm("Une nouvelle version cloud est disponible. Charger ?");
+      if (!shouldLoad) return showToast("Nouvelle version cloud disponible.", "info");
+      mergeOrReplaceLocalGameWithCloud(cloudGame);
+      showScreen("live");
+      showToast("Nouvelle version cloud chargée.", "success");
+    })
+    .subscribe();
+  showToast("Synchronisation temps réel marqueur activée.", "success");
+}
+
+function subscribeToCurrentCloudGame() {
+  const game = getCurrentGame();
+  if (!game) return showToast("Aucune partie active à synchroniser.", "warning");
+  subscribeToCloudGame(ensurePublicGameId(game));
 }
 
 function openResumeGameModal(prefill = "") {
@@ -4049,22 +4210,10 @@ function calculateStatsForSide(game, side) {
   getAtBatList(game, side).forEach((atBat) => {
     if (!statsMap.has(atBat.playerId)) statsMap.set(atBat.playerId, emptyStat(atBat.playerId));
     const stat = statsMap.get(atBat.playerId);
-    stat.ab += atBat.ab || 0;
-    stat.hit += atBat.hit || 0;
-    stat.single += atBat.single || 0;
-    stat.double += atBat.double || 0;
-    stat.triple += atBat.triple || 0;
-    stat.hr += atBat.hr || 0;
-    stat.bb += atBat.bb || 0;
-    stat.strikeout += atBat.strikeout || 0;
-    stat.rbi += atBat.rbi || 0;
-    stat.run += atBat.run || 0;
+    accumulateAtBatIntoStat(stat, atBat);
   });
 
-  return Array.from(statsMap.values()).map((stat) => ({
-    ...stat,
-    avg: formatAverage(stat.hit, stat.ab)
-  }));
+  return Array.from(statsMap.values()).map(finalizeStat);
 }
 
 function emptyStat(playerId) {
@@ -4078,17 +4227,79 @@ function emptyStat(playerId) {
     hr: 0,
     bb: 0,
     strikeout: 0,
+    sacrifice: 0,
+    fieldersChoice: 0,
     rbi: 0,
     run: 0,
+    plateAppearances: 0,
     avg: ".000"
+  };
+}
+
+function calculateSeasonStats() {
+  const statsMap = new Map(appData.team.players.map((player) => [player.id, emptyStat(player.id)]));
+  appData.games
+    .filter(shouldIncludeGameInSeasonStats)
+    .forEach((game) => {
+      (game.atBats || []).forEach((atBat) => {
+        if (!statsMap.has(atBat.playerId)) statsMap.set(atBat.playerId, emptyStat(atBat.playerId));
+        accumulateAtBatIntoStat(statsMap.get(atBat.playerId), atBat);
+      });
+    });
+  return Array.from(statsMap.values())
+    .filter((stat) => stat.plateAppearances || appData.team.players.some((player) => player.id === stat.playerId))
+    .sort((a, b) => statPlayerName(a.playerId, "team").localeCompare(statPlayerName(b.playerId, "team")))
+    .map(finalizeStat);
+}
+
+function calculatePlayerSeasonStats(playerId) {
+  return calculateSeasonStats().find((stat) => stat.playerId === playerId) || finalizeStat(emptyStat(playerId));
+}
+
+function shouldIncludeGameInSeasonStats(game) {
+  const status = normalizeGameStatus(game?.status);
+  const hasActions = Boolean((game?.atBats || []).length || (game?.opponentAtBats || []).length);
+  return hasActions && ["in_progress", "completed"].includes(status);
+}
+
+function accumulateAtBatIntoStat(stat, atBat) {
+  stat.ab += atBat.ab || 0;
+  stat.hit += atBat.hit || 0;
+  stat.single += atBat.single || 0;
+  stat.double += atBat.double || 0;
+  stat.triple += atBat.triple || 0;
+  stat.hr += atBat.hr || 0;
+  stat.bb += atBat.bb || 0;
+  stat.strikeout += atBat.strikeout || 0;
+  stat.rbi += atBat.rbi || 0;
+  stat.run += atBat.run || 0;
+  stat.sacrifice = (stat.sacrifice || 0) + (atBat.result === "Sacrifice" ? 1 : 0);
+  stat.fieldersChoice = (stat.fieldersChoice || 0) + (atBat.result === "FC" ? 1 : 0);
+  stat.plateAppearances = (stat.plateAppearances || 0) + 1;
+}
+
+function finalizeStat(stat) {
+  return {
+    ...stat,
+    sacrifice: stat.sacrifice || 0,
+    fieldersChoice: stat.fieldersChoice || 0,
+    plateAppearances: stat.plateAppearances || 0,
+    avg: formatAverage(stat.hit, stat.ab)
   };
 }
 
 function renderStats() {
   const game = getGameForDisplay();
-  const stats = calculateStats(game);
+  const stats = activeStatsView === "season" ? calculateSeasonStats() : calculateStats(game);
   const opponentStats = calculateOpponentStats(game);
   const totals = getStatsTotals(stats);
+  $$(".stats-view-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.statsView === activeStatsView);
+  });
+  const statsLabel = document.querySelector("#screen-stats .team-badge");
+  if (statsLabel) {
+    statsLabel.textContent = activeStatsView === "season" ? "Stats cumulées - Notre équipe" : "Match actuel - Notre équipe";
+  }
   $("#statsSummary").innerHTML = stats.length ? `
     <div class="stat-card"><span>Total AB</span><strong>${totals.ab}</strong></div>
     <div class="stat-card"><span>Coups sûrs</span><strong>${totals.hit}</strong></div>
@@ -4098,8 +4309,8 @@ function renderStats() {
   ` : `<div class="empty-state">Aucune statistique disponible. Marquez une partie pour remplir ce tableau.</div>`;
 
   $("#statsBody").innerHTML = renderStatsRows(stats, "team");
-  $("#opponentStatsSection").classList.toggle("hidden", !game || game.opponentTrackingMode !== "complete");
-  $("#opponentStatsBody").innerHTML = opponentStats.length ? renderStatsRows(opponentStats, "opponent") : `<tr><td colspan="12">Aucune statistique adverse.</td></tr>`;
+  $("#opponentStatsSection").classList.toggle("hidden", activeStatsView === "season" || !game || game.opponentTrackingMode !== "complete");
+  $("#opponentStatsBody").innerHTML = opponentStats.length ? renderStatsRows(opponentStats, "opponent") : `<tr><td colspan="15">Aucune statistique adverse.</td></tr>`;
 }
 
 function renderStatsRows(stats, side) {
@@ -4108,8 +4319,8 @@ function renderStatsRows(stats, side) {
     <tr>
       <td>${escapeHtml(statPlayerName(stat.playerId, side))}</td>
       <td>${stat.ab}</td><td>${stat.hit}</td><td>${stat.single}</td><td>${stat.double}</td>
-      <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.strikeout}</td><td>${stat.rbi}</td>
-      <td>${stat.run}</td><td class="avg-cell">${stat.avg}</td>
+      <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.strikeout}</td><td>${stat.sacrifice}</td>
+      <td>${stat.fieldersChoice}</td><td>${stat.rbi}</td><td>${stat.run}</td><td>${stat.plateAppearances}</td><td class="avg-cell">${stat.avg}</td>
     </tr>
   `).join("");
 
@@ -4118,12 +4329,12 @@ function renderStatsRows(stats, side) {
     <tr class="total-row">
       <td>${totalLabel}</td>
       <td>${totals.ab}</td><td>${totals.hit}</td><td>${totals.single}</td><td>${totals.double}</td>
-      <td>${totals.triple}</td><td>${totals.hr}</td><td>${totals.bb}</td><td>${totals.strikeout}</td><td>${totals.rbi}</td>
-      <td>${totals.run}</td><td class="avg-cell">${formatAverage(totals.hit, totals.ab)}</td>
+      <td>${totals.triple}</td><td>${totals.hr}</td><td>${totals.bb}</td><td>${totals.strikeout}</td><td>${totals.sacrifice}</td>
+      <td>${totals.fieldersChoice}</td><td>${totals.rbi}</td><td>${totals.run}</td><td>${totals.plateAppearances}</td><td class="avg-cell">${formatAverage(totals.hit, totals.ab)}</td>
     </tr>
   ` : "";
 
-  return stats.length ? `${rows}${totalRow}` : `<tr><td colspan="12">Aucune statistique disponible.</td></tr>`;
+  return stats.length ? `${rows}${totalRow}` : `<tr><td colspan="15">Aucune statistique disponible.</td></tr>`;
 }
 
 function getStatsTotals(stats) {
@@ -4136,10 +4347,13 @@ function getStatsTotals(stats) {
     totals.hr += stat.hr;
     totals.bb += stat.bb;
     totals.strikeout += stat.strikeout;
+    totals.sacrifice += stat.sacrifice || 0;
+    totals.fieldersChoice += stat.fieldersChoice || 0;
     totals.rbi += stat.rbi;
     totals.run += stat.run;
+    totals.plateAppearances += stat.plateAppearances || 0;
     return totals;
-  }, { ab: 0, hit: 0, single: 0, double: 0, triple: 0, hr: 0, bb: 0, strikeout: 0, rbi: 0, run: 0 });
+  }, { ab: 0, hit: 0, single: 0, double: 0, triple: 0, hr: 0, bb: 0, strikeout: 0, sacrifice: 0, fieldersChoice: 0, rbi: 0, run: 0, plateAppearances: 0 });
 }
 
 function formatAverage(hit, ab) {
@@ -4147,6 +4361,12 @@ function formatAverage(hit, ab) {
   const average = hit / ab;
   if (average >= 1) return "1.000";
   return average.toFixed(3).replace(/^0/, "");
+}
+
+function formatBattingAverage(value, ab = 1) {
+  if (!ab || !Number.isFinite(value)) return ".000";
+  if (value >= 1) return "1.000";
+  return value.toFixed(3).replace(/^0/, "");
 }
 
 function renderReport() {
@@ -4238,7 +4458,7 @@ function renderAtBatsReportSection(title, atBats, side, game) {
 function statsTable(rows) {
   return `
     <table>
-      <thead><tr><th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>MOY</th></tr></thead>
+      <thead><tr><th>Joueur</th><th>AB</th><th>H</th><th>1B</th><th>2B</th><th>3B</th><th>HR</th><th>BB</th><th>K</th><th>SAC</th><th>FC</th><th>PP</th><th>P</th><th>PA</th><th>MOY</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
