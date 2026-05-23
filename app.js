@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-23-v2";
+const APP_VERSION_FALLBACK = "2026-05-23-v3";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
@@ -89,14 +89,43 @@ let spectatorGameState = null;
 let spectatorPlayByPlay = [];
 let spectatorSubscriptions = [];
 let cloudSyncTimers = {};
+let safeMobileMode = false;
+let appDiagnostics = {
+  loadTime: new Date().toISOString(),
+  errors: [],
+  logs: []
+};
 
 // Pour un usage public à grande échelle, sécuriser les écritures avec authentification, code marqueur ou Edge Function.
 if (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY) {
   supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  appLog("Client Supabase chargé", "success");
+} else {
+  appLog("Client Supabase absent", "warning");
 }
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+window.addEventListener("error", (event) => {
+  captureAppError({
+    message: event.message || "Erreur JavaScript",
+    file: event.filename || "",
+    line: event.lineno || "",
+    column: event.colno || "",
+    stack: event.error?.stack || ""
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  captureAppError({
+    message: event.reason?.message || String(event.reason || "Promesse rejetée"),
+    file: "",
+    line: "",
+    column: "",
+    stack: event.reason?.stack || ""
+  });
+});
 
 document.addEventListener("DOMContentLoaded", initApp);
 
@@ -104,9 +133,15 @@ function initApp() {
   const params = new URLSearchParams(window.location.search);
   const watchId = params.get("watch");
   const resumeId = params.get("resume");
+  if (isDebugMode()) {
+    appLog("Démarrage de l'application en mode diagnostic", "info");
+    document.body.classList.add("debug-mode");
+    renderDebugPanel();
+  }
   if (watchId) {
     spectatorMode = true;
     renderSpectatorMode(watchId);
+    if (isDebugMode()) runAppDiagnostics();
     return;
   }
 
@@ -130,6 +165,7 @@ function initApp() {
   setDefaultGameDate();
   renderAll();
   checkForAppUpdate();
+  if (isDebugMode()) runAppDiagnostics();
   if (resumeId) handleResumeParamOnLoad(resumeId);
 }
 
@@ -145,6 +181,7 @@ function setupNavigation() {
 }
 
 function showScreen(screenName) {
+  appLog(`Navigation vers ${screenName}`, "info");
   if (screenName === "lineup" && !canOpenLineup()) return;
   $$(".screen").forEach((screen) => screen.classList.remove("active"));
   const screen = $(`#screen-${screenName}`);
@@ -316,6 +353,7 @@ function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) {
     pwaReady = false;
     updateOfflineStatus();
+    appLog("Service worker absent", "warning");
     return;
   }
 
@@ -324,16 +362,19 @@ function registerServiceWorker() {
       .then((registration) => {
         pwaReady = Boolean(registration.active || registration.waiting || registration.installing);
         updateOfflineStatus();
+        appLog(`Service worker enregistré : ${registration.scope}`, "success");
 
         navigator.serviceWorker.ready.then(() => {
           pwaReady = true;
           updateOfflineStatus();
+          appLog("Service worker actif", "success");
           showToast("Mode hors ligne prêt.", "success");
         });
       })
       .catch(() => {
         pwaReady = false;
         updateOfflineStatus();
+        appLog("Erreur service worker", "error");
         showToast("PWA non disponible avec ce mode d'ouverture.", "warning");
       });
   });
@@ -418,6 +459,231 @@ async function forceAppUpdate() {
   window.location.reload();
 }
 
+function isDebugMode() {
+  return new URLSearchParams(window.location.search).get("debug") === "1";
+}
+
+function appLog(message, type = "info") {
+  appDiagnostics.logs.unshift({
+    message,
+    type,
+    time: new Date().toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+  });
+  appDiagnostics.logs = appDiagnostics.logs.slice(0, 20);
+  if (isDebugMode()) renderDebugPanel();
+}
+
+function captureAppError(errorInfo) {
+  appDiagnostics.errors.unshift({
+    ...errorInfo,
+    time: new Date().toISOString()
+  });
+  appDiagnostics.errors = appDiagnostics.errors.slice(0, 5);
+  appLog(`Erreur capturée : ${errorInfo.message}`, "error");
+}
+
+function renderDebugPanel(snapshot = appDiagnostics.lastSnapshot || null) {
+  if (!isDebugMode()) return;
+  if (!document.body) return;
+  let panel = $("#debugPanel");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "debugPanel";
+    panel.className = "debug-panel";
+    document.body.prepend(panel);
+  }
+  const game = getCurrentGame?.() || null;
+  const rows = snapshot?.rows || [
+    ["Version de l'app", appVersion || APP_VERSION_FALLBACK],
+    ["Chargement", appDiagnostics.loadTime],
+    ["Internet", navigator.onLine ? "En ligne" : "Hors ligne"],
+    ["Largeur écran", `${window.innerWidth}px`],
+    ["Matchs locaux", appData?.games?.length || 0],
+    ["Joueurs locaux", appData?.team?.players?.length || 0],
+    ["Partie active", game ? "Oui" : "Non"],
+    ["currentGameId", appData?.currentGameId || "—"],
+    ["publicGameId", game?.publicGameId || "—"]
+  ];
+  panel.innerHTML = `
+    <div class="debug-title-row">
+      <div>
+        <p class="eyebrow">Diagnostic</p>
+        <h2>Diagnostic Baseball ScorePad</h2>
+      </div>
+      <div class="debug-actions">
+        <button type="button" onclick="runAppDiagnostics()">Relancer tests</button>
+        <button type="button" onclick="enableSafeMobileMode()">Activer mode mobile sécuritaire</button>
+        <button type="button" class="warning-btn" onclick="forceAppUpdate()">Vider cache PWA</button>
+      </div>
+    </div>
+    <div class="debug-grid">
+      ${rows.map(([label, value]) => `<div><span>${escapeHtml(String(label))}</span><strong>${escapeHtml(String(value ?? "—"))}</strong></div>`).join("")}
+    </div>
+    <div class="debug-columns">
+      <section>
+        <h3>Tests boutons marqueur</h3>
+        <div class="debug-list">${renderDebugButtonTests(snapshot?.buttons || testScorerButtons())}</div>
+      </section>
+      <section>
+        <h3>Dernière erreur JavaScript</h3>
+        ${renderDebugErrors()}
+      </section>
+      <section>
+        <h3>Logs internes</h3>
+        ${renderDebugLogs()}
+      </section>
+    </div>
+  `;
+}
+
+async function runAppDiagnostics() {
+  if (!isDebugMode()) return;
+  appLog("Diagnostic lancé", "info");
+  const [storage, serviceWorker, supabaseStatus, assets] = await Promise.all([
+    testLocalStorage(),
+    testServiceWorkerAndCaches(),
+    testSupabaseConnection(),
+    testAssetLoading()
+  ]);
+  const game = getCurrentGame();
+  const rows = [
+    ["Version de l'app", appVersion || APP_VERSION_FALLBACK],
+    ["Date/heure chargement", appDiagnostics.loadTime],
+    ["Appareil", detectDeviceType()],
+    ["Largeur écran", `${window.innerWidth}px`],
+    ["Statut Internet", navigator.onLine ? "En ligne" : "Hors ligne"],
+    ["Service worker", serviceWorker.summary],
+    ["Cache PWA", `${serviceWorker.cacheCount} cache(s) : ${serviceWorker.cacheNames.join(", ") || "aucun"}`],
+    ["localStorage", storage.ok ? "OK" : `Erreur — ${storage.error}`],
+    ["Supabase client", supabaseClient ? "Chargé" : "Absent"],
+    ["Supabase connexion", supabaseStatus.ok ? "OK" : `Erreur — ${supabaseStatus.error}`],
+    ["manifest.json", assets.manifest],
+    ["version.json", assets.version],
+    ["app.js chargé", "Oui"],
+    ["style.css chargé", assets.style],
+    ["Nombre de matchs locaux", appData.games.length],
+    ["Nombre de joueurs locaux", appData.team.players.length],
+    ["Partie active", game ? "Oui" : "Non"],
+    ["currentGameId", appData.currentGameId || "—"],
+    ["publicGameId", game?.publicGameId || "—"]
+  ];
+  appDiagnostics.lastSnapshot = { rows, buttons: testScorerButtons() };
+  renderDebugPanel(appDiagnostics.lastSnapshot);
+}
+
+async function testSupabaseConnection() {
+  if (!window.supabase) return { ok: false, error: "window.supabase absent" };
+  if (!supabaseClient) return { ok: false, error: "supabaseClient absent" };
+  try {
+    const { error } = await supabaseClient.from("saved_games_cloud").select("public_game_id").limit(1);
+    if (error) throw error;
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message || String(error) };
+  }
+}
+
+function testLocalStorage() {
+  try {
+    const key = "__scorepad_debug_test__";
+    localStorage.setItem(key, "ok");
+    const ok = localStorage.getItem(key) === "ok";
+    localStorage.removeItem(key);
+    return ok ? { ok: true } : { ok: false, error: "lecture différente de l'écriture" };
+  } catch (error) {
+    return { ok: false, error: error.message || String(error) };
+  }
+}
+
+async function testServiceWorkerAndCaches() {
+  const supported = "serviceWorker" in navigator;
+  const cacheNames = "caches" in window ? await caches.keys() : [];
+  if (!supported) return { summary: "Absent", cacheCount: cacheNames.length, cacheNames };
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    const scope = registrations[0]?.scope || "aucun scope actif";
+    return {
+      summary: registrations.length ? `Actif/supporté — ${registrations.length} registration(s), ${scope}` : "Supporté, aucune registration",
+      cacheCount: cacheNames.length,
+      cacheNames
+    };
+  } catch (error) {
+    return { summary: `Erreur — ${error.message || error}`, cacheCount: cacheNames.length, cacheNames };
+  }
+}
+
+async function testAssetLoading() {
+  const fetchStatus = async (url) => {
+    try {
+      const response = await fetch(`${url}?ts=${Date.now()}`, { cache: "no-store" });
+      return response.ok ? "Accessible" : `Erreur HTTP ${response.status}`;
+    } catch (error) {
+      return `Erreur — ${error.message || error}`;
+    }
+  };
+  const styleLoaded = Boolean([...document.styleSheets].find((sheet) => String(sheet.href || "").includes("style.css")));
+  return {
+    manifest: await fetchStatus("manifest.json"),
+    version: await fetchStatus("version.json"),
+    style: styleLoaded ? "Oui" : "Non détecté"
+  };
+}
+
+function testScorerButtons() {
+  const tests = [
+    ["Simple", "Simple"],
+    ["Double", "Double"],
+    ["BB", "BB"],
+    ["K", "K"],
+    ["Retrait", "Retrait"],
+    ["Plus", "Plus"],
+    ["Modifier les coureurs", "Modifier les coureurs"],
+    ["Fin de demi-manche", "Fin demi-manche"]
+  ];
+  const buttons = $$("button");
+  return tests.map(([label, text]) => ({
+    label,
+    found: buttons.some((button) => button.textContent.trim().toLowerCase().includes(text.toLowerCase()))
+  }));
+}
+
+function renderDebugButtonTests(tests) {
+  return tests.map((test) => `<div><span>${escapeHtml(test.label)}</span><strong class="${test.found ? "debug-ok" : "debug-error"}">${test.found ? "trouvé" : "absent"}</strong></div>`).join("");
+}
+
+function renderDebugErrors() {
+  if (!appDiagnostics.errors.length) return `<p class="debug-empty">Aucune erreur capturée.</p>`;
+  const error = appDiagnostics.errors[0];
+  return `
+    <pre class="debug-error-box">${escapeHtml([
+      error.message,
+      error.file ? `${error.file}:${error.line}:${error.column}` : "",
+      error.stack || ""
+    ].filter(Boolean).join("\n"))}</pre>
+  `;
+}
+
+function renderDebugLogs() {
+  if (!appDiagnostics.logs.length) return `<p class="debug-empty">Aucun log.</p>`;
+  return `<ol class="debug-log-list">${appDiagnostics.logs.map((log) => `<li class="${escapeHtml(log.type)}"><span>${escapeHtml(log.time)}</span> ${escapeHtml(log.message)}</li>`).join("")}</ol>`;
+}
+
+function detectDeviceType() {
+  const ua = navigator.userAgent || "";
+  if (/ipad|tablet/i.test(ua)) return "Tablette";
+  if (/iphone|android.*mobile|mobile/i.test(ua)) return "Cellulaire";
+  return "Ordinateur";
+}
+
+function enableSafeMobileMode() {
+  safeMobileMode = true;
+  document.body.classList.add("safe-mobile-mode");
+  activeMobileScorerTab = "scoring";
+  appLog("Mode mobile sécuritaire activé", "warning");
+  renderAll();
+  renderDebugPanel();
+}
+
 function updateOfflineStatus() {
   const isOnline = navigator.onLine;
   const networkText = isOnline ? "Connexion disponible" : "Hors ligne";
@@ -472,6 +738,7 @@ function updateSyncStatusUI(game = getCurrentGame()) {
 }
 
 function loadData() {
+  appLog("Chargement localStorage", "info");
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
@@ -492,6 +759,7 @@ function loadData() {
 
   migrateData();
   saveData();
+  appLog(`localStorage chargé : ${appData.games.length} partie(s), ${appData.team.players.length} joueur(s)`, "success");
 }
 
 function migrateData() {
@@ -2001,6 +2269,7 @@ function recordOffensiveAction(action) {
 }
 
 function openOutOptionsModal() {
+  appLog("Ouverture options de retrait", "info");
   $("#outOptionsModal").classList.remove("hidden");
 }
 
@@ -3008,6 +3277,7 @@ function ensureInningScore(game, inning) {
 }
 
 function renderLive() {
+  appLog("Rendu écran Match", "info");
   const game = getCurrentGame();
   if (!game || !canOpenLiveMatch(game)) {
     renderMatchScreen(game);
@@ -3230,6 +3500,7 @@ function renderMobileQuickActionBar(game) {
 }
 
 function triggerScorerAction(action) {
+  appLog(`Clic action marqueur : ${action}`, "info");
   closeMoreActionsPanel();
   if (action === "out") return openOutOptionsModal();
   confirmBatterBeforeAction(action);
@@ -4040,6 +4311,7 @@ function scheduleCloudSave(game) {
 // Pour un usage public à grande échelle, sécuriser la reprise avec un code marqueur ou authentification.
 async function syncFullGameToCloud(game) {
   if (!game) return { success: false, error: "missing_game" };
+  appLog(`Sauvegarde cloud demandée : ${game.publicGameId || game.id}`, "info");
   ensurePublicGameId(game);
   if (!supabaseClient || !navigator.onLine) {
     setCloudSaveState(game.id, navigator.onLine ? "pending" : "offline", true);
@@ -4072,9 +4344,11 @@ async function syncFullGameToCloud(game) {
       .upsert(payload, { onConflict: "public_game_id" });
     if (error) throw error;
     setCloudSaveState(game.id, "synced", false, updatedAt);
+    appLog(`Sauvegarde cloud OK : ${game.publicGameId}`, "success");
     return { success: true, updatedAt };
   } catch (error) {
     console.warn("Cloud game sync failed", error);
+    appLog(`Erreur cloud : ${error.message || error}`, "error");
     setCloudSaveState(game.id, "error", true);
     return { success: false, error };
   }
@@ -4926,6 +5200,7 @@ function renderHomeScreen() {
 }
 
 function renderHome() {
+  appLog("Rendu écran Accueil", "info");
   renderHomeScreen();
 }
 

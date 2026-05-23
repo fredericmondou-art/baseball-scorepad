@@ -2773,6 +2773,128 @@ textarea {
   color: #fff;
 }
 
+.debug-panel {
+  position: relative;
+  z-index: 50;
+  display: grid;
+  gap: 12px;
+  margin: 12px;
+  padding: 14px;
+  border: 2px solid #f0b429;
+  border-radius: 10px;
+  background: #fffdf3;
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.debug-title-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.debug-title-row h2 {
+  margin: 0;
+}
+
+.debug-actions,
+.debug-columns {
+  display: grid;
+  gap: 10px;
+}
+
+.debug-actions {
+  grid-template-columns: repeat(3, minmax(0, auto));
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.debug-grid div,
+.debug-list div {
+  padding: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.debug-grid span,
+.debug-list span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.debug-grid strong,
+.debug-list strong {
+  overflow-wrap: anywhere;
+}
+
+.debug-columns {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.1fr) minmax(0, 1.1fr);
+}
+
+.debug-list {
+  display: grid;
+  gap: 6px;
+}
+
+.debug-ok {
+  color: var(--success);
+}
+
+.debug-error {
+  color: var(--danger);
+}
+
+.debug-error-box {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 10px;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  font-size: 12px;
+}
+
+.debug-log-list {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.debug-log-list li {
+  margin-bottom: 6px;
+  font-weight: 800;
+}
+
+.debug-log-list span,
+.debug-empty {
+  color: var(--muted);
+}
+
+.safe-mobile-mode * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.safe-mobile-mode .field-animation-layer,
+.safe-mobile-mode .spectator-animation-layer {
+  display: none !important;
+}
+
+.safe-mobile-mode .mobile-quick-action-bar {
+  display: grid !important;
+}
+
 @media (max-width: 1120px) {
   .app-header,
   .dashboard-hero,
@@ -2866,6 +2988,17 @@ textarea {
 }
 
 @media (max-width: 720px) {
+  .debug-title-row,
+  .debug-columns {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .debug-actions,
+  .debug-grid {
+    grid-template-columns: 1fr;
+  }
+
   body {
     font-size: 16px;
     padding-bottom: 88px;
