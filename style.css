@@ -434,6 +434,84 @@ main {
   margin-top: 14px;
 }
 
+.admin-only {
+  display: none !important;
+}
+
+.admin-authenticated .admin-only {
+  display: grid !important;
+}
+
+.admin-dashboard-grid,
+.spectator-public-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-login-card {
+  max-width: 520px;
+}
+
+.inline-admin-form {
+  display: grid;
+  gap: 10px;
+}
+
+.helper-text,
+.form-error {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.form-error {
+  color: var(--danger);
+}
+
+.public-scoreboard {
+  display: grid;
+  gap: 10px;
+}
+
+.public-scoreboard > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-radius: 8px;
+  background: #eef4f8;
+}
+
+.public-scoreboard strong {
+  color: var(--sport-blue);
+  font-size: 2.4rem;
+}
+
+.public-bases {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.public-bases div {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.link-button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sport-blue);
+  text-align: left;
+  text-decoration: underline;
+}
+
 .recent-games-list,
 .stats-recent-list {
   display: grid;
@@ -2995,7 +3073,10 @@ textarea {
   }
 
   .debug-actions,
-  .debug-grid {
+  .debug-grid,
+  .admin-dashboard-grid,
+  .spectator-public-grid,
+  .public-bases {
     grid-template-columns: 1fr;
   }
 

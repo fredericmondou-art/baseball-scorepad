@@ -50,7 +50,7 @@
         <div id="homeSummary" class="score-summary"></div>
       </div>
 
-      <div class="home-grid">
+      <div class="home-grid admin-only">
         <article class="home-card primary-card">
           <div>
             <h3>Calendrier</h3>
@@ -117,7 +117,23 @@
       <div id="homeQuickActions" class="quick-actions-grid"></div>
     </section>
 
-    <section id="screen-players" class="screen">
+    <section id="screen-public-live" class="screen">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">Public</p>
+          <h2>Match live</h2>
+          <p>Suivez le score, les coureurs et le play-by-play en direct.</p>
+        </div>
+        <button class="secondary-btn" onclick="loadGamesFromCloud()">Charger les matchs</button>
+      </div>
+      <div id="publicLiveContent"></div>
+    </section>
+
+    <section id="screen-admin" class="screen">
+      <div id="adminContent"></div>
+    </section>
+
+    <section id="screen-players" class="screen admin-screen">
       <div class="section-title">
         <div>
           <p class="eyebrow">Effectif</p>
@@ -162,7 +178,7 @@
       </div>
     </section>
 
-    <section id="screen-calendar" class="screen">
+    <section id="screen-calendar" class="screen admin-screen">
       <div class="section-title">
         <div>
           <p class="eyebrow">Saison</p>
@@ -371,7 +387,7 @@
       </form>
     </section>
 
-    <section id="screen-lineup" class="screen">
+    <section id="screen-lineup" class="screen admin-screen">
       <div class="section-title">
         <div>
           <p class="eyebrow">Ordre offensif</p>
@@ -413,7 +429,7 @@
       </div>
     </section>
 
-    <section id="screen-live" class="screen">
+    <section id="screen-live" class="screen admin-screen">
       <div id="matchStateContainer"></div>
       <div id="liveLayout" class="live-layout">
         <div id="mobileScorerTabs" class="mobile-scorer-tabs"></div>
@@ -541,7 +557,7 @@
       <div id="recentStatsView" class="stats-block hidden"></div>
     </section>
 
-    <section id="screen-report" class="screen">
+    <section id="screen-report" class="screen admin-screen">
       <div class="section-title report-actions">
         <div>
           <p class="eyebrow">Impression</p>
@@ -553,7 +569,7 @@
       <div id="reportContent" class="report-content"></div>
     </section>
 
-    <section id="screen-settings" class="screen">
+    <section id="screen-settings" class="screen admin-screen">
       <div class="section-title">
         <div>
           <p class="eyebrow">Application</p>

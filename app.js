@@ -1,6 +1,9 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-23-v3";
+const APP_VERSION_FALLBACK = "2026-05-25-v1";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
+const DEFAULT_ADMIN_PASSWORD = "changer-moi";
+const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
+const ADMIN_SESSION_KEY = "baseballScorepadAdminAuthenticated";
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
 const TEAM_BRANDING = {
@@ -82,6 +85,8 @@ let pendingAction = null;
 let pendingRunnerMovementAction = null;
 let activeMobileScorerTab = "situation";
 let activeStatsView = "season";
+let selectedStatsGameId = null;
+let selectedStatsPlayerId = null;
 let supabaseClient = null;
 let cloudGameSubscription = null;
 let spectatorMode = false;
@@ -146,6 +151,8 @@ function initApp() {
   }
 
   loadData();
+  initializePublicData();
+  setupPublicNavigation();
   setupNavigation();
   setupForms();
   setupLiveActions();
@@ -180,8 +187,23 @@ function setupNavigation() {
   $("#homeLineupBtn").addEventListener("click", openLineupForCurrentGame);
 }
 
+function setupPublicNavigation() {
+  const nav = $(".top-nav");
+  if (!nav || nav.dataset.publicReady === "true") return;
+  nav.innerHTML = `
+    <button class="nav-btn active" data-screen="home"><span>⌂</span> Accueil</button>
+    <button class="nav-btn" data-screen="public-live"><span>◆</span> Match live</button>
+    <button class="nav-btn" data-screen="stats"><span>%</span> Stats</button>
+    <button class="nav-btn" data-screen="admin"><span>⚙</span> Admin</button>
+  `;
+  nav.dataset.publicReady = "true";
+}
+
 function showScreen(screenName) {
   appLog(`Navigation vers ${screenName}`, "info");
+  if (isAdminScreen(screenName) && !isAdminAuthenticated()) {
+    screenName = "admin";
+  }
   if (screenName === "lineup" && !canOpenLineup()) return;
   $$(".screen").forEach((screen) => screen.classList.remove("active"));
   const screen = $(`#screen-${screenName}`);
@@ -192,6 +214,10 @@ function showScreen(screenName) {
   });
 
   renderAll();
+}
+
+function isAdminScreen(screenName) {
+  return ["players", "calendar", "lineup", "live", "report", "settings"].includes(screenName);
 }
 
 function openCalendar(message) {
@@ -1281,6 +1307,7 @@ function deleteCalendarEvent(eventId) {
 }
 
 function createGameFromCalendarEvent(eventId) {
+  if (!isAdminAuthenticated()) return showScreen("admin");
   const event = appData.calendar.find((item) => item.id === eventId);
   if (!event) return;
 
@@ -1322,18 +1349,21 @@ function createGameFromCalendarEvent(eventId) {
 }
 
 function openLinkedGameLineup(gameId) {
+  if (!isAdminAuthenticated()) return showScreen("admin");
   appData.currentGameId = gameId;
   saveData();
   openLineupForCurrentGame();
 }
 
 function openLinkedGameMatch(gameId) {
+  if (!isAdminAuthenticated()) return showScreen("admin");
   appData.currentGameId = gameId;
   saveData();
   openMatchForCurrentGame();
 }
 
 function openReportForGame(gameId) {
+  if (!isAdminAuthenticated()) return openGameStats(gameId);
   appData.currentGameId = gameId;
   saveData();
   showScreen("report");
@@ -2270,6 +2300,7 @@ function recordOffensiveAction(action) {
 
 function openOutOptionsModal() {
   appLog("Ouverture options de retrait", "info");
+  if (!ensureAdminBeforeScoring()) return;
   $("#outOptionsModal").classList.remove("hidden");
 }
 
@@ -3501,6 +3532,7 @@ function renderMobileQuickActionBar(game) {
 
 function triggerScorerAction(action) {
   appLog(`Clic action marqueur : ${action}`, "info");
+  if (!ensureAdminBeforeScoring()) return;
   closeMoreActionsPanel();
   if (action === "out") return openOutOptionsModal();
   confirmBatterBeforeAction(action);
@@ -4262,6 +4294,11 @@ function copyResumeShareLink() {
 
 function handleResumeParamOnLoad(publicGameId) {
   if (!publicGameId) return;
+  if (!isAdminAuthenticated()) {
+    showScreen("admin");
+    showToast("Connectez-vous à Admin pour reprendre cette partie.", "info");
+    return;
+  }
   loadGameFromCloud(publicGameId);
 }
 
@@ -4437,6 +4474,39 @@ async function loadGamesFromCloud() {
   } catch (error) {
     console.warn("Cloud games load failed", error);
     showToast("Impossible de charger les matchs cloud. Vérifiez votre connexion.", "error");
+  }
+}
+
+function initializePublicData() {
+  loadPublicGamesFromCloud();
+}
+
+async function loadPublicGamesFromCloud() {
+  if (!supabaseClient || !navigator.onLine) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from("saved_games_cloud")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      if (!row?.game_data) return;
+      const cloudGame = normalizeGame({
+        ...row.game_data,
+        publicGameId: row.public_game_id || row.game_data.publicGameId,
+        cloudSaveStatus: "synced",
+        pendingCloudSave: false,
+        cloudUpdatedAt: row.updated_at || row.game_data.cloudUpdatedAt || null
+      });
+      const existingIndex = appData.games.findIndex((game) => game.publicGameId === cloudGame.publicGameId || game.id === cloudGame.id);
+      if (existingIndex >= 0) appData.games[existingIndex] = cloudGame;
+      else appData.games.push(cloudGame);
+    });
+    saveData();
+    renderAll();
+  } catch (error) {
+    appLog(`Données cloud publiques indisponibles : ${error.message || error}`, "warning");
   }
 }
 
@@ -4718,6 +4788,14 @@ function finalizeStat(stat) {
 
 function renderStats() {
   const game = getGameForDisplay();
+  if (activeStatsView === "game") {
+    renderGameStatsScreen(selectedStatsGameId);
+    return;
+  }
+  if (activeStatsView === "player") {
+    renderPlayerStatsDetail(selectedStatsPlayerId);
+    return;
+  }
   if (activeStatsView === "recent") {
     $$(".stats-view-btn").forEach((button) => {
       button.classList.toggle("active", button.dataset.statsView === activeStatsView);
@@ -4758,7 +4836,7 @@ function renderStatsRows(stats, side) {
   const totals = getStatsTotals(stats);
   const rows = stats.map((stat) => `
     <tr>
-      <td>${escapeHtml(statPlayerName(stat.playerId, side))}</td>
+      <td>${side === "team" ? `<button class="link-button" onclick="openPlayerStats('${stat.playerId}')">${escapeHtml(statPlayerName(stat.playerId, side))}</button>` : escapeHtml(statPlayerName(stat.playerId, side))}</td>
       <td>${stat.gamesPlayed}</td><td>${stat.ab}</td><td>${stat.hit}</td><td>${stat.single}</td><td>${stat.double}</td>
       <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.strikeout}</td><td>${stat.sacrifice}</td>
       <td>${stat.fieldersChoice}</td><td>${stat.rbi}</td><td>${stat.run}</td><td>${stat.plateAppearances}</td><td class="avg-cell">${stat.avg}</td><td>${stat.obp}</td><td>${stat.slg}</td><td>${stat.ops}</td>
@@ -4852,6 +4930,118 @@ function renderRecentGamesStatsView() {
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function openPlayerStats(playerId) {
+  selectedStatsPlayerId = playerId;
+  activeStatsView = "player";
+  showScreen("stats");
+}
+
+function renderPlayerStatsDetail(playerId) {
+  const stat = calculatePlayerSeasonStats(playerId);
+  const games = getPlayerAtBatsByGame(playerId);
+  $$(".stats-view-btn").forEach((button) => button.classList.remove("active"));
+  $("#statsSummary").innerHTML = `
+    <div class="stat-card wide-stat"><span>Fiche joueur</span><strong>${escapeHtml(statPlayerName(playerId, "team"))}</strong></div>
+    <div class="stat-card"><span>AVG</span><strong>${stat.avg}</strong></div>
+    <div class="stat-card"><span>OPS</span><strong>${stat.ops}</strong></div>
+  `;
+  $("#statsBody").innerHTML = `<tr><td colspan="19">Fiche joueur affichée ci-dessous.</td></tr>`;
+  $("#opponentStatsSection").classList.add("hidden");
+  $("#recentStatsView").classList.remove("hidden");
+  $("#recentStatsView").innerHTML = `
+    <button class="secondary-btn" onclick="activeStatsView='season';renderStats()">Retour aux stats</button>
+    <section class="recent-stats-card">
+      <h3>${escapeHtml(statPlayerName(playerId, "team"))}</h3>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["AB", stat.ab], ["H", stat.hit], ["BB", stat.bb], ["K", stat.strikeout],
+          ["PP", stat.rbi], ["Points", stat.run], ["OBP", stat.obp], ["SLG", stat.slg]
+        ])}
+      </div>
+    </section>
+    <section class="recent-stats-card table-wrap">
+      <h3>Stats par partie</h3>
+      <table>
+        <thead><tr><th>Date</th><th>Adversaire</th><th>Score</th><th>AB</th><th>H</th><th>BB</th><th>K</th><th>PP</th><th>P</th><th>Apparitions</th></tr></thead>
+        <tbody>${games.map(formatPlayerGameLine).join("") || `<tr><td colspan="10">Aucune apparition.</td></tr>`}</tbody>
+      </table>
+    </section>
+  `;
+}
+
+function getPlayerAtBatsByGame(playerId) {
+  return appData.games
+    .map((game) => ({
+      game,
+      atBats: (game.atBats || []).filter((atBat) => atBat.playerId === playerId)
+    }))
+    .filter((item) => item.atBats.length)
+    .map((item) => {
+      const stat = finalizeStat(item.atBats.reduce((acc, atBat) => {
+        accumulateAtBatIntoStat(acc, atBat, item.game.id || item.game.publicGameId);
+        return acc;
+      }, emptyStat(playerId)));
+      return { ...item, stat };
+    });
+}
+
+function formatPlayerGameLine(item) {
+  return `
+    <tr>
+      <td>${escapeHtml(formatDate(item.game.date))}</td>
+      <td>${escapeHtml(item.game.opponent || "Adversaire")}</td>
+      <td>${item.game.scoreTeam} - ${item.game.scoreOpponent}</td>
+      <td>${item.stat.ab}</td><td>${item.stat.hit}</td><td>${item.stat.bb}</td><td>${item.stat.strikeout}</td><td>${item.stat.rbi}</td><td>${item.stat.run}</td>
+      <td>${escapeHtml(item.atBats.map((atBat) => atBat.result).join(", "))}</td>
+    </tr>
+  `;
+}
+
+function renderGameStatsScreen(gameId) {
+  const game = appData.games.find((item) => item.id === gameId || item.publicGameId === gameId);
+  if (!game) return;
+  const stats = calculateGameStats(game);
+  $$(".stats-view-btn").forEach((button) => button.classList.remove("active"));
+  $("#statsSummary").innerHTML = `
+    <div class="stat-card wide-stat"><span>Stats du match</span><strong>${escapeHtml(game.opponent || "Adversaire")}</strong></div>
+    <div class="stat-card"><span>Score</span><strong>${game.scoreTeam}-${game.scoreOpponent}</strong></div>
+  `;
+  $("#statsBody").innerHTML = renderStatsRows(stats, "team");
+  $("#opponentStatsSection").classList.add("hidden");
+  $("#recentStatsView").classList.remove("hidden");
+  $("#recentStatsView").innerHTML = `
+    <button class="secondary-btn" onclick="activeStatsView='season';renderStats();showScreen('home')">Retour à l'accueil</button>
+    ${renderGameSummary(game)}
+    <section class="recent-stats-card">
+      <h3>Play-by-play</h3>
+      <div class="play-list">${(game.playByPlay || []).map((play) => `<div class="play-item"><strong>${escapeHtml(play.result || "")}</strong><span>${escapeHtml(play.description || "")}</span></div>`).join("") || `<div class="empty-state">Aucune action.</div>`}</div>
+    </section>
+  `;
+}
+
+function calculateGameStats(game) {
+  return calculateStats(game);
+}
+
+function renderGameSummary(game) {
+  const summary = calculateGameSummaryStats(game);
+  return `
+    <section class="recent-stats-card">
+      <h3>Résumé du match</h3>
+      <div class="score-summary compact-summary">
+        ${summaryRows([
+          ["Date", formatDate(game.date)],
+          ["Adversaire", game.opponent || "Adversaire"],
+          ["Statut", normalizeGameStatus(game.status)],
+          ["Coups sûrs", summary.hits],
+          ["PP", summary.rbi],
+          ["Meilleur frappeur", getTopBatterForGame(game)]
+        ])}
+      </div>
+    </section>
   `;
 }
 
@@ -5093,9 +5283,251 @@ function renderSettings() {
   renderAppVersion({ version: appVersion || APP_VERSION_FALLBACK, updatedAt: "" });
 }
 
+// Sécurité MVP : ce mot de passe protège l'interface dans un site statique GitHub Pages,
+// mais ce n'est pas une authentification forte. Pour une vraie sécurité, migrer vers Supabase Auth ou une Edge Function.
+function getAdminPassword() {
+  return localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD;
+}
+
+function checkAdminPassword(password) {
+  return String(password || "") === getAdminPassword();
+}
+
+function setAdminSession() {
+  sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
+}
+
+function isAdminAuthenticated() {
+  return sessionStorage.getItem(ADMIN_SESSION_KEY) === "true";
+}
+
+function logoutAdmin() {
+  sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  showScreen("admin");
+  showToast("Déconnexion Admin effectuée.", "info");
+}
+
+function handleAdminLogin(event) {
+  event.preventDefault();
+  if (!checkAdminPassword($("#adminPasswordInput")?.value || "")) {
+    $("#adminLoginError").textContent = "Mot de passe incorrect.";
+    return;
+  }
+  setAdminSession();
+  const resumeId = new URLSearchParams(window.location.search).get("resume");
+  if (resumeId) loadGameFromCloud(resumeId);
+  renderAll();
+  showToast("Admin déverrouillé.", "success");
+}
+
+function updateAdminPassword(event) {
+  event?.preventDefault();
+  const input = $("#newAdminPasswordInput");
+  const value = input?.value.trim();
+  if (!value || value.length < 4) return showToast("Entrez un mot de passe d'au moins 4 caractères.", "warning");
+  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, value);
+  input.value = "";
+  showToast("Mot de passe Admin mis à jour.", "success");
+}
+
+function renderAdminScreen() {
+  const container = $("#adminContent");
+  if (!container) return;
+  container.innerHTML = isAdminAuthenticated() ? renderAdminDashboard() : renderAdminLoginScreen();
+}
+
+function renderAdminLoginScreen() {
+  return `
+    <section class="section-title">
+      <div>
+        <p class="eyebrow">Zone privée</p>
+        <h2>Admin / Marqueur</h2>
+        <p>Connectez-vous pour scorer les matchs, gérer le calendrier et modifier les données.</p>
+      </div>
+    </section>
+    <form class="card form-card admin-login-card" onsubmit="handleAdminLogin(event)">
+      <h3>Connexion Admin</h3>
+      <label>Mot de passe
+        <input id="adminPasswordInput" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="adminLoginError" class="form-error"></p>
+      <button type="submit" class="primary-btn">Entrer dans Admin</button>
+      <p class="helper-text">Sécurité MVP : le mot de passe protège l'interface, mais ce n'est pas une authentification forte.</p>
+    </form>
+  `;
+}
+
+function renderAdminDashboard() {
+  const game = getCurrentGame();
+  return `
+    <section class="section-title admin-title">
+      <div>
+        <p class="eyebrow">Zone privée</p>
+        <h2>Admin / Marqueur</h2>
+        <p>Actions de gestion, scoring, cloud, maintenance et paramètres.</p>
+      </div>
+      <button class="secondary-btn" onclick="logoutAdmin()">Se déconnecter</button>
+    </section>
+    <div class="admin-dashboard-grid">
+      <article class="home-card dashboard-card">
+        <h3>Actions principales</h3>
+        <div class="home-card-actions">
+          <button class="primary-btn" onclick="openScorerMode()">Ouvrir mode marqueur</button>
+          <button onclick="openManageGames()">Créer / gérer les matchs</button>
+          <button onclick="openManagePlayers()">Gérer joueurs</button>
+          <button onclick="openCalendarAdmin()">Calendrier</button>
+        </div>
+      </article>
+      <article class="home-card dashboard-card">
+        <h3>Cloud</h3>
+        <p>${escapeHtml(game ? cloudSaveStatusLabel(game) : "Aucune partie active")}</p>
+        <div class="home-card-actions">
+          <button class="primary-btn" onclick="loadGamesFromCloud()">Charger matchs cloud</button>
+          <button onclick="refreshCurrentGameFromCloud()">Rafraîchir partie active</button>
+        </div>
+      </article>
+      <article class="home-card dashboard-card">
+        <h3>Maintenance</h3>
+        <div class="home-card-actions">
+          <button onclick="openTeamSettings()">Paramètres équipe</button>
+          <button onclick="openDiagnostics()">Diagnostic</button>
+          <button class="warning-btn" onclick="forceAppUpdate()">Forcer mise à jour PWA</button>
+        </div>
+      </article>
+      <article class="home-card dashboard-card">
+        <h3>Mot de passe Admin</h3>
+        <form onsubmit="updateAdminPassword(event)" class="inline-admin-form">
+          <label>Nouveau mot de passe
+            <input id="newAdminPasswordInput" type="password" autocomplete="new-password">
+          </label>
+          <button type="submit">Mettre à jour</button>
+        </form>
+        <p class="helper-text">Mot de passe par défaut : changer-moi. Ne jamais mettre de clé service_role Supabase dans le client.</p>
+      </article>
+    </div>
+  `;
+}
+
+function openScorerMode() {
+  if (!isAdminAuthenticated()) return showScreen("admin");
+  showScreen("live");
+}
+
+function openManageGames() {
+  if (!isAdminAuthenticated()) return showScreen("admin");
+  showScreen("calendar");
+}
+
+function openManagePlayers() {
+  if (!isAdminAuthenticated()) return showScreen("admin");
+  showScreen("players");
+}
+
+function openCalendarAdmin() {
+  openManageGames();
+}
+
+function openTeamSettings() {
+  if (!isAdminAuthenticated()) return showScreen("admin");
+  showScreen("settings");
+}
+
+function openDiagnostics() {
+  if (!isAdminAuthenticated()) return showScreen("admin");
+  const url = new URL(window.location.href);
+  url.searchParams.set("debug", "1");
+  window.location.href = url.toString();
+}
+
+function ensureAdminBeforeScoring() {
+  if (isAdminAuthenticated()) return true;
+  showScreen("admin");
+  return false;
+}
+
+function renderPublicLiveScreen() {
+  const container = $("#publicLiveContent");
+  if (!container) return;
+  const liveGames = appData.games.filter((game) => normalizeGameStatus(game.status) === "in_progress");
+  const game = getCurrentLiveGame() || liveGames[0] || getRecentGames(1)[0];
+  if (!game) {
+    container.innerHTML = `<div class="empty-state">Aucun match disponible. <button onclick="loadGamesFromCloud()">Charger les matchs</button></div>`;
+    return;
+  }
+  container.innerHTML = renderSpectatorGame(game, liveGames);
+}
+
+function getCurrentLiveGame() {
+  return appData.games.find((game) => normalizeGameStatus(game.status) === "in_progress") || null;
+}
+
+function renderSpectatorGame(game, liveGames = []) {
+  return `
+    <div class="spectator-public-grid">
+      <section class="spectator-card spectator-score-card">
+        <div class="card-title-row">
+          <h2>${escapeHtml(appData.team.name)} vs ${escapeHtml(game.opponent || "Adversaire")}</h2>
+          <span class="mini-badge">${normalizeGameStatus(game.status) === "in_progress" ? "En direct" : "Terminé"}</span>
+        </div>
+        ${renderPublicSpectatorScoreboard(game)}
+        ${renderPublicSpectatorBases(game)}
+        <div class="home-card-actions">
+          ${game.publicGameId ? `<button class="primary-btn" onclick="openLiveGame('${game.publicGameId}')">Ouvrir le lien live</button>` : ""}
+          <button onclick="openGameStats('${game.id}')">Voir stats du match</button>
+        </div>
+      </section>
+      <section class="spectator-card">
+        <h3>Play-by-play</h3>
+        <div class="play-list">${(game.playByPlay || []).slice(0, 12).map((play) => `<div class="play-item"><strong>${escapeHtml(play.result || "")}</strong><span>${escapeHtml(play.description || "")}</span></div>`).join("") || `<div class="empty-state">Aucune action.</div>`}</div>
+      </section>
+      ${liveGames.length > 1 ? `<section class="spectator-card wide-dashboard-card"><h3>Matchs live disponibles</h3>${liveGames.map((item) => renderGameCard(item)).join("")}</section>` : ""}
+    </div>
+  `;
+}
+
+function renderPublicSpectatorScoreboard(game) {
+  return `
+    <div class="public-scoreboard">
+      <div><span>${escapeHtml(appData.team.name)}</span><strong>${game.scoreTeam}</strong></div>
+      <div><span>${escapeHtml(game.opponent || "Adversaire")}</span><strong>${game.scoreOpponent}</strong></div>
+      <p>Manche ${escapeHtml(formatHalfInningSummary(game))} · Retraits ${game.outs}/3</p>
+      <p>Frappeur : ${escapeHtml(getCurrentBatterLabel(game))}</p>
+      <p>Dernière action : ${escapeHtml(renderLastActionSummary(game))}</p>
+    </div>
+  `;
+}
+
+function renderPublicSpectatorBases(game) {
+  return `
+    <div class="public-bases">
+      <div><span>1B</span><strong>${escapeHtml(runnerName(game.bases.first, game))}</strong></div>
+      <div><span>2B</span><strong>${escapeHtml(runnerName(game.bases.second, game))}</strong></div>
+      <div><span>3B</span><strong>${escapeHtml(runnerName(game.bases.third, game))}</strong></div>
+    </div>
+  `;
+}
+
+function openLiveGame(publicGameId) {
+  if (!publicGameId) return showScreen("public-live");
+  window.location.href = `${window.location.origin}${window.location.pathname}?watch=${publicGameId}`;
+}
+
+function renderGameCard(game) {
+  return renderRecentGameCard(game);
+}
+
+function openGameStats(gameId) {
+  selectedStatsGameId = gameId;
+  activeStatsView = "game";
+  showScreen("stats");
+}
+
 function renderAll() {
+  document.body.classList.toggle("admin-authenticated", isAdminAuthenticated());
   renderHeader();
   renderHome();
+  renderPublicLiveScreen();
+  renderAdminScreen();
   renderPlayers();
   renderCalendar();
   renderLineup();
@@ -5190,12 +5622,10 @@ function renderHomeScreen() {
   renderRecentGames();
 
   $("#homeQuickActions").innerHTML = `
-    <button class="primary-btn" onclick="openCalendar()">Calendrier</button>
-    <button onclick="showScreen('players')">Joueurs</button>
+    <button class="primary-btn" onclick="showScreen('public-live')">Match live</button>
     <button onclick="showScreen('stats')">Stats</button>
     <button onclick="loadGamesFromCloud()">Charger matchs cloud</button>
-    <button onclick="openReportForCurrentGame()">Rapport</button>
-    <button onclick="openResumeGameModal()">Reprendre une partie</button>
+    <button onclick="showScreen('admin')">Admin</button>
   `;
 }
 
@@ -5237,8 +5667,8 @@ function renderRecentGameCard(game) {
   const completed = status === "completed";
   const result = completed ? gameResultLabel(game) : "En cours";
   const primaryAction = status === "in_progress"
-    ? `<button class="small-btn primary-btn" onclick="openLinkedGameMatch('${game.id}')">Reprendre</button>`
-    : `<button class="small-btn primary-btn" onclick="openReportForGame('${game.id}')">Rapport</button>`;
+    ? `<button class="small-btn primary-btn" onclick="openLiveGame('${game.publicGameId || ""}')">Suivre live</button>`
+    : `<button class="small-btn primary-btn" onclick="openGameStats('${game.id}')">Voir stats</button>`;
   return `
     <div class="upcoming-item recent-game-item">
       <div>
@@ -5250,7 +5680,7 @@ function renderRecentGameCard(game) {
         </div>
       </div>
       <div class="row-actions">
-        <button class="small-btn secondary-btn" onclick="openLinkedGameMatch('${game.id}')">Ouvrir</button>
+        <button class="small-btn secondary-btn" onclick="openGameStats('${game.id}')">Stats du match</button>
         ${primaryAction}
       </div>
     </div>
@@ -5311,7 +5741,7 @@ function getCurrentGameSummary() {
       ? `Manche ${game.currentInning} ${game.half} · ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`
       : `${formatDate(game.date)} · ${game.status}`;
     const actions = status === "in_progress"
-      ? `<button class="primary-btn" onclick="showScreen('live')">Ouvrir le match</button>`
+      ? `<button class="primary-btn" onclick="openLiveGame('${game.publicGameId || ""}')">Suivre le match live</button>`
       : `<button onclick="openLineupForCurrentGame()">Préparer l'alignement</button><button class="primary-btn" onclick="showScreen('live')">Voir l'état match</button>`;
     return `
       <article class="home-card dashboard-card">
@@ -5330,7 +5760,7 @@ function getCurrentGameSummary() {
         <h3>Dernière partie terminée</h3>
         <p>${escapeHtml(appData.team.name)} ${lastCompleted.scoreTeam} - ${lastCompleted.scoreOpponent} ${escapeHtml(lastCompleted.opponent || "Adversaire")}</p>
         <div class="home-card-actions">
-          <button class="primary-btn" onclick="openReportForGame('${lastCompleted.id}')">Voir rapport</button>
+          <button class="primary-btn" onclick="openGameStats('${lastCompleted.id}')">Voir stats du match</button>
         </div>
       </article>
     `;
@@ -5341,7 +5771,7 @@ function getCurrentGameSummary() {
       <h3>Partie actuelle</h3>
       <p>Aucune partie active.</p>
       <div class="home-card-actions">
-        <button class="primary-btn" onclick="openCalendar()">Aller au calendrier</button>
+        <button class="primary-btn" onclick="loadGamesFromCloud()">Charger les matchs</button>
       </div>
     </article>
   `;
