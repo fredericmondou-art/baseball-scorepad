@@ -186,20 +186,20 @@ function setupNavigation() {
     button.addEventListener("click", () => showScreen(button.dataset.screen));
   });
 
-  $("#continueGameBtn").addEventListener("click", () => {
+  $("#continueGameBtn")?.addEventListener("click", () => {
     openMatchForCurrentGame();
   });
-  $("#homeLineupBtn").addEventListener("click", openLineupForCurrentGame);
+  $("#homeLineupBtn")?.addEventListener("click", openLineupForCurrentGame);
 }
 
 function setupPublicNavigation() {
   const nav = $(".top-nav");
   if (!nav || nav.dataset.publicReady === "true") return;
   nav.innerHTML = `
-    <button class="nav-btn active" data-screen="home"><span>⌂</span> Accueil</button>
-    <button class="nav-btn" data-screen="public-live"><span>◆</span> Match live</button>
+    <button class="nav-btn active" data-screen="home"><span>H</span> Accueil</button>
+    <button class="nav-btn" data-screen="public-live"><span>L</span> Match live</button>
     <button class="nav-btn" data-screen="stats"><span>%</span> Stats</button>
-    <button class="nav-btn" data-screen="admin"><span>⚙</span> Admin</button>
+    <button class="nav-btn" data-screen="admin"><span>A</span> Admin</button>
   `;
   nav.dataset.publicReady = "true";
 }
@@ -5627,6 +5627,7 @@ function renderAdminDashboard() {
           <button onclick="openManageGames()">Créer / gérer les matchs</button>
           <button onclick="openManagePlayers()">Gérer joueurs</button>
           <button onclick="openCalendarAdmin()">Calendrier</button>
+          <button onclick="showScreen('report')">Feuille de match / Rapports</button>
         </div>
       </article>
       <article class="home-card dashboard-card">
@@ -5805,26 +5806,6 @@ function renderHeader() {
     : "Aucune partie";
 }
 
-function renderHomeLegacy() {
-  const game = getCurrentGame();
-  if ($("#currentGameHomeText")) {
-    $("#currentGameHomeText").textContent = game
-      ? `${game.opponent || "Adversaire"} · ${game.date || "-"} · ${game.status}`
-      : "Aucune partie active. Allez au calendrier pour créer une partie.";
-  }
-  if ($("#homeLineupBtn")) $("#homeLineupBtn").disabled = !game;
-  if ($("#continueGameBtn")) {
-    $("#continueGameBtn").textContent = game ? "Ouvrir le match" : "Aller au calendrier";
-  }
-  $("#homeSummary").innerHTML = summaryRows([
-    ["Équipe", appData.team.name],
-    ["Joueurs", appData.team.players.length],
-    ["Matchs calendrier", appData.calendar.length],
-    ["Parties sauvegardées", appData.games.length],
-    ["Partie actuelle", game ? `${game.opponent} (${game.status})` : "Aucune"]
-  ]);
-}
-
 function summaryRows(rows) {
   return rows.map(([label, value]) => `
     <div class="summary-row">
@@ -5834,47 +5815,58 @@ function summaryRows(rows) {
   `).join("");
 }
 
+function renderPublicCurrentGameCard() {
+  const liveGame = getCurrentLiveGame() || appData.games.find((game) => normalizeGameStatus(game.status) === "in_progress");
+  if (!liveGame) {
+    return `
+      <article class="home-card dashboard-card">
+        <h3>Match en cours</h3>
+        <p>Aucune partie en cours.</p>
+        <div class="home-card-actions">
+          <button class="primary-btn" onclick="loadGamesFromCloud()">Charger les matchs</button>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="home-card dashboard-card">
+      <h3>Match en cours</h3>
+      <p>${escapeHtml(appData.team.name)} vs ${escapeHtml(liveGame.opponent || "Adversaire")}</p>
+      <p class="home-detail">${escapeHtml(appData.team.name)} ${liveGame.scoreTeam} - ${liveGame.scoreOpponent} ${escapeHtml(liveGame.opponent || "Adversaire")} - ${escapeHtml(formatHalfInningSummary(liveGame))} - ${liveGame.outs || 0} retrait${Number(liveGame.outs || 0) > 1 ? "s" : ""}</p>
+      <div class="home-card-actions">
+        <button class="primary-btn" onclick="openLiveGame('${liveGame.publicGameId || ""}')">Suivre le match live</button>
+      </div>
+    </article>
+  `;
+}
+
 function renderHomeScreen() {
   const record = calculateTeamRecord();
   const upcoming = getUpcomingCalendarEvents(5);
+  const activePlayers = appData.team.players.filter((player) => player.active !== false).length;
 
   $("#homeTopGrid").innerHTML = `
+    ${renderPublicCurrentGameCard()}
     <article class="home-card dashboard-card">
-      <h3>Fiche de l'équipe</h3>
+      <h3>Resume rapide</h3>
       <div class="record-grid">
         ${recordStat("Victoires", record.wins)}
-        ${recordStat("Défaites", record.losses)}
+        ${recordStat("Defaites", record.losses)}
         ${recordStat("Nuls", record.ties)}
-        ${recordStat("Matchs joués", record.gamesPlayed)}
-        ${recordStat("Pourcentage", record.winPercentage)}
+        ${recordStat("Parties sauvegardees", appData.games.length)}
+        ${recordStat("Joueurs actifs", activePlayers)}
       </div>
-    </article>
-    ${getCurrentGameSummary()}
-    <article class="home-card dashboard-card">
-      <h3>Résumé rapide</h3>
-      <div class="score-summary compact-summary">
-        ${summaryRows([
-          ["Joueurs", appData.team.players.length],
-          ["Parties sauvegardées", appData.games.length],
-          ["Matchs calendrier", appData.calendar.length]
-        ])}
-      </div>
-    </article>
-    <article class="home-card dashboard-card">
-      <h3>Reprendre une partie</h3>
-      <p>Chargez une sauvegarde cloud avec un code de reprise.</p>
-      <button class="primary-btn" onclick="openResumeGameModal()">Entrer un code de reprise</button>
     </article>
   `;
 
   $("#homeUpcoming").innerHTML = `
     <article class="home-card dashboard-card wide-dashboard-card">
       <div class="card-title-row">
-        <h3>5 prochains matchs</h3>
-        <button class="small-btn primary-btn" onclick="openCalendar()">Ouvrir le calendrier</button>
+        <h3>Prochains matchs</h3>
       </div>
       <div class="upcoming-list">
-        ${upcoming.length ? upcoming.map(renderUpcomingEvent).join("") : `<div class="empty-state">Aucun match à venir. Ajoutez un match dans le calendrier.</div>`}
+        ${upcoming.length ? upcoming.map(renderUpcomingEvent).join("") : `<div class="empty-state">Aucun match a venir pour le moment.</div>`}
       </div>
     </article>
   `;
@@ -5882,10 +5874,7 @@ function renderHomeScreen() {
   renderRecentGames();
 
   $("#homeQuickActions").innerHTML = `
-    <button class="primary-btn" onclick="showScreen('public-live')">Match live</button>
-    <button onclick="showScreen('stats')">Stats</button>
-    <button onclick="loadGamesFromCloud()">Charger matchs cloud</button>
-    <button onclick="showScreen('admin')">Admin</button>
+    <button class="primary-btn" onclick="loadGamesFromCloud()">Charger les matchs cloud</button>
   `;
 }
 
@@ -5916,7 +5905,7 @@ function renderRecentGames() {
         <button class="small-btn primary-btn" onclick="loadGamesFromCloud()">Charger les matchs cloud</button>
       </div>
       <div class="recent-games-list">
-        ${games.length ? games.map(renderRecentGameCard).join("") : `<div class="empty-state">Aucun match joué pour le moment.</div>`}
+        ${games.length ? games.map(renderRecentGameCard).join("") : `<div class="empty-state">Aucun match joue pour le moment.</div>`}
       </div>
     </article>
   `;
@@ -5932,9 +5921,9 @@ function renderRecentGameCard(game) {
   return `
     <div class="upcoming-item recent-game-item">
       <div>
-        <strong>${escapeHtml(formatDate(game.date))} · ${escapeHtml(game.opponent || "Adversaire")}</strong>
+        <strong>${escapeHtml(formatDate(game.date))} - ${escapeHtml(game.opponent || "Adversaire")}</strong>
         <div class="player-meta">
-          <span class="mini-badge">${escapeHtml(status === "completed" ? "Terminé" : game.status || "Match")}</span>
+          <span class="mini-badge">${escapeHtml(status === "completed" ? "Termine" : game.status || "Match")}</span>
           <span>${escapeHtml(appData.team.name)} ${game.scoreTeam} - ${game.scoreOpponent} ${escapeHtml(game.opponent || "Adversaire")}</span>
           <span>${escapeHtml(result)}</span>
         </div>
@@ -5951,7 +5940,7 @@ function gameResultLabel(game) {
   const team = Number(game.scoreTeam || 0);
   const opponent = Number(game.scoreOpponent || 0);
   if (team > opponent) return "Victoire";
-  if (team < opponent) return "Défaite";
+  if (team < opponent) return "Defaite";
   return "Nul";
 }
 
@@ -5993,68 +5982,25 @@ function getUpcomingCalendarEvents(limit = 5) {
     .slice(0, limit);
 }
 
-function getCurrentGameSummary() {
-  const game = getCurrentGame();
-  if (game && normalizeGameStatus(game.status) !== "completed") {
-    const status = normalizeGameStatus(game.status);
-    const detail = status === "in_progress"
-      ? `Manche ${game.currentInning} ${game.half} · ${appData.team.name} ${game.scoreTeam} - ${game.scoreOpponent} ${game.opponent || "Adversaire"}`
-      : `${formatDate(game.date)} · ${game.status}`;
-    const actions = status === "in_progress"
-      ? `<button class="primary-btn" onclick="openLiveGame('${game.publicGameId || ""}')">Suivre le match live</button>`
-      : `<button onclick="openLineupForCurrentGame()">Préparer l'alignement</button><button class="primary-btn" onclick="showScreen('live')">Voir l'état match</button>`;
-    return `
-      <article class="home-card dashboard-card">
-        <h3>Partie actuelle</h3>
-        <p>${escapeHtml(game.opponent || "Adversaire")}</p>
-        <p class="home-detail">${escapeHtml(detail)}</p>
-        <div class="home-card-actions">${actions}</div>
-      </article>
-    `;
-  }
-
-  const lastCompleted = [...appData.games].reverse().find((game) => normalizeGameStatus(game.status) === "completed");
-  if (lastCompleted) {
-    return `
-      <article class="home-card dashboard-card">
-        <h3>Dernière partie terminée</h3>
-        <p>${escapeHtml(appData.team.name)} ${lastCompleted.scoreTeam} - ${lastCompleted.scoreOpponent} ${escapeHtml(lastCompleted.opponent || "Adversaire")}</p>
-        <div class="home-card-actions">
-          <button class="primary-btn" onclick="openGameStats('${lastCompleted.id}')">Voir stats du match</button>
-        </div>
-      </article>
-    `;
-  }
-
-  return `
-    <article class="home-card dashboard-card">
-      <h3>Partie actuelle</h3>
-      <p>Aucune partie active.</p>
-      <div class="home-card-actions">
-        <button class="primary-btn" onclick="loadGamesFromCloud()">Charger les matchs</button>
-      </div>
-    </article>
-  `;
-}
-
 function renderUpcomingEvent(event) {
   const linkedGame = event.linkedGameId ? appData.games.find((game) => game.id === event.linkedGameId) : null;
-  const action = !linkedGame
-    ? `<button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">Créer partie</button>`
-    : canOpenLiveMatch(linkedGame)
-      ? `<button class="small-btn primary-btn" onclick="openLinkedGameMatch('${linkedGame.id}')">Ouvrir match</button>`
-      : `<button class="small-btn secondary-btn" onclick="openLinkedGameLineup('${linkedGame.id}')">Préparer alignement</button>`;
+  const status = linkedGame ? normalizeGameStatus(linkedGame.status) : normalizeGameStatus(event.status);
+  const action = linkedGame && status === "in_progress"
+    ? `<button class="small-btn primary-btn" onclick="openLiveGame('${linkedGame.publicGameId || ""}')">Suivre live</button>`
+    : linkedGame && status === "completed"
+      ? `<button class="small-btn secondary-btn" onclick="openGameStats('${linkedGame.id}')">Voir stats</button>`
+      : "";
   return `
     <div class="upcoming-item">
       <div>
-        <strong>${escapeHtml(formatDate(event.date))}${event.time ? ` · ${escapeHtml(event.time)}` : ""} · ${escapeHtml(event.opponent || "Adversaire")}</strong>
+        <strong>${escapeHtml(formatDate(event.date))}${event.time ? ` - ${escapeHtml(event.time)}` : ""} - ${escapeHtml(event.opponent || "Adversaire")}</strong>
         <div class="player-meta">
           <span class="mini-badge">${escapeHtml(event.homeAway || "local")}</span>
           <span class="mini-badge">${escapeHtml(event.gameType || "Saison")}</span>
-          <span>${escapeHtml(event.field || "Terrain à confirmer")}</span>
+          <span>${escapeHtml(event.field || "Terrain a confirmer")}</span>
         </div>
       </div>
-      <div class="row-actions">${action}</div>
+      ${action ? `<div class="row-actions">${action}</div>` : ""}
     </div>
   `;
 }

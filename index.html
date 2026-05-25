@@ -29,85 +29,18 @@
       <span id="pwaStatus" class="status-pill status-neutral">PWA en préparation</span>
     </div>
     <nav class="top-nav" aria-label="Navigation principale">
-      <button class="nav-btn active" data-screen="home"><span>⌂</span> Accueil</button>
-      <button class="nav-btn" data-screen="players"><span>#</span> Joueurs</button>
-      <button class="nav-btn" data-screen="calendar"><span>□</span> Calendrier</button>
-      <button class="nav-btn" data-screen="live"><span>◆</span> Match</button>
+      <button class="nav-btn active" data-screen="home"><span>H</span> Accueil</button>
+      <button class="nav-btn" data-screen="public-live"><span>L</span> Match live</button>
       <button class="nav-btn" data-screen="stats"><span>%</span> Stats</button>
-      <button class="nav-btn" data-screen="report"><span>▤</span> Rapport</button>
-      <button class="nav-btn" data-screen="settings"><span>⚙</span> Paramètres</button>
+      <button class="nav-btn" data-screen="admin"><span>A</span> Admin</button>
     </nav>
   </header>
 
   <main>
     <section id="screen-home" class="screen active">
-      <div class="dashboard-hero">
-        <div>
-          <p class="eyebrow">Tableau de bord</p>
-          <h2>Prêt pour la prochaine manche.</h2>
-          <p>Gérez votre équipe, préparez l'alignement et marquez chaque présence au bâton avec une interface pensée pour le terrain.</p>
-        </div>
-        <div id="homeSummary" class="score-summary"></div>
-      </div>
-
-      <div class="home-grid admin-only">
-        <article class="home-card primary-card">
-          <div>
-            <h3>Calendrier</h3>
-            <p>Préparer les matchs de l'année et créer une partie à partir d'un événement.</p>
-          </div>
-          <button class="primary-btn" data-screen="calendar">Ouvrir le calendrier</button>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Partie actuelle</h3>
-            <p id="currentGameHomeText">Aucune partie active.</p>
-          </div>
-          <div class="home-card-actions">
-            <button id="homeLineupBtn">Préparer l'alignement</button>
-            <button id="continueGameBtn" class="primary-btn">Ouvrir le match</button>
-          </div>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Joueurs</h3>
-            <p>Ajouter, modifier ou retirer les joueurs.</p>
-          </div>
-          <button data-screen="players">Gérer</button>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Calendrier</h3>
-            <p>Préparer les matchs de l'année et créer une partie.</p>
-          </div>
-          <button data-screen="calendar">Ouvrir</button>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Statistiques</h3>
-            <p>Voir les performances de notre équipe et de l'adversaire.</p>
-          </div>
-          <button data-screen="stats">Voir</button>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Feuille de match</h3>
-            <p>Consulter et imprimer le rapport complet.</p>
-          </div>
-          <button data-screen="report">Ouvrir</button>
-        </article>
-        <article class="home-card">
-          <div>
-            <h3>Paramètres</h3>
-            <p>Nom d'équipe, sauvegarde et données.</p>
-          </div>
-          <button data-screen="settings">Régler</button>
-        </article>
-      </div>
-
       <div class="section-title compact-title">
         <div>
-          <p class="eyebrow">Tableau de bord</p>
+          <p class="eyebrow">Public</p>
           <h2>Accueil</h2>
         </div>
       </div>
