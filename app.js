@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-25-v2";
+const APP_VERSION_FALLBACK = "2026-05-25-v3";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -90,6 +90,7 @@ let activeMobileScorerTab = "situation";
 let activeStatsView = "season";
 let selectedStatsGameId = null;
 let selectedStatsPlayerId = null;
+let statsCloudPlayersRequested = false;
 let supabaseClient = null;
 let cloudGameSubscription = null;
 let spectatorMode = false;
@@ -859,6 +860,7 @@ function normalizeGame(game) {
     opponentLineup: migratedOpponentLineup,
     atBats: normalizeAtBats(game.atBats),
     opponentAtBats: normalizeAtBats(game.opponentAtBats),
+    teamSnapshot: game.teamSnapshot || null,
     playByPlay: Array.isArray(game.playByPlay) ? game.playByPlay : [],
     scoreTeam: Number(game.scoreTeam || 0),
     scoreOpponent: Number(game.scoreOpponent || 0),
@@ -970,6 +972,91 @@ function createOpponentPlayer(number, game = getCurrentGame(), id = null) {
   };
 }
 
+function normalizeCloudPlayer(player) {
+  const id = player?.playerId || player?.id;
+  if (!id) return null;
+  const now = new Date().toISOString();
+  const firstName = player.firstName || "";
+  const lastName = player.lastName || "";
+  const number = String(player.number || "").replace(/^#/, "").trim();
+  return {
+    id,
+    playerId: id,
+    number,
+    firstName,
+    lastName,
+    name: player.name || `${firstName} ${lastName}`.trim(),
+    position: player.position || "",
+    active: player.active !== false && player.status !== "inactive",
+    status: player.status || (player.active === false ? "inactive" : "active"),
+    createdAt: player.createdAt || now,
+    updatedAt: player.updatedAt || now
+  };
+}
+
+function isPlayerInfoComplete(player) {
+  return Boolean(player && (player.firstName || player.lastName || player.name || player.number));
+}
+
+function preferPlayerData(localPlayer, cloudPlayer) {
+  const local = normalizeCloudPlayer(localPlayer) || {};
+  const cloud = normalizeCloudPlayer(cloudPlayer) || {};
+  const localScore = ["number", "firstName", "lastName", "name", "position"].filter((key) => local[key]).length;
+  const cloudScore = ["number", "firstName", "lastName", "name", "position"].filter((key) => cloud[key]).length;
+  const newerCloud = new Date(cloud.updatedAt || 0).getTime() > new Date(local.updatedAt || 0).getTime();
+  const base = cloudScore > localScore || newerCloud ? { ...local, ...cloud } : { ...cloud, ...local };
+  ["number", "firstName", "lastName", "name", "position"].forEach((key) => {
+    if (!base[key]) base[key] = local[key] || cloud[key] || "";
+  });
+  return base;
+}
+
+function mergeCloudPlayersIntoLocal(cloudPlayers = []) {
+  let changed = false;
+  cloudPlayers.map(normalizeCloudPlayer).filter(Boolean).forEach((cloudPlayer) => {
+    const index = appData.team.players.findIndex((player) => player.id === cloudPlayer.id || player.playerId === cloudPlayer.id);
+    if (index >= 0) {
+      const merged = preferPlayerData(appData.team.players[index], cloudPlayer);
+      if (JSON.stringify(appData.team.players[index]) !== JSON.stringify(merged)) {
+        appData.team.players[index] = merged;
+        changed = true;
+      }
+    } else if (isPlayerInfoComplete(cloudPlayer)) {
+      appData.team.players.push(cloudPlayer);
+      changed = true;
+    }
+  });
+  if (changed) saveData();
+  return changed;
+}
+
+function createBatterSnapshot(playerId, side = "team", game = getCurrentGame()) {
+  if (side === "opponent") {
+    const batter = findOpponentBatter(game, playerId);
+    const number = getOpponentPlayerNumber(batter);
+    return {
+      playerId,
+      batterId: playerId,
+      number,
+      firstName: "",
+      lastName: "",
+      name: opponentBatterName(batter, game),
+      displayName: opponentBatterName(batter, game)
+    };
+  }
+  const player = findPlayer(playerId);
+  const displayName = getPlayerDisplayName(playerId, null);
+  return {
+    playerId,
+    batterId: playerId,
+    number: player?.number || "",
+    firstName: player?.firstName || "",
+    lastName: player?.lastName || "",
+    name: player ? `${player.firstName || ""} ${player.lastName || ""}`.trim() : "",
+    displayName
+  };
+}
+
 function migrateOpponentPlayerLabels(game) {
   const lineup = Array.isArray(game?.opponentLineup) ? game.opponentLineup : [];
   return lineup.map((batter) => {
@@ -1071,8 +1158,9 @@ function savePlayerFromForm(event) {
   if (editingId) {
     const player = appData.team.players.find((item) => item.id === editingId);
     if (!player) return showToast("Joueur introuvable.", "error");
-    Object.assign(player, { number, firstName, lastName, position, active });
+    Object.assign(player, { number, firstName, lastName, position, active, updatedAt: new Date().toISOString() });
     saveData();
+    syncPlayersToCloud();
     resetPlayerForm();
     renderAll();
     return showToast("Joueur modifié avec succès", "success");
@@ -1084,9 +1172,12 @@ function savePlayerFromForm(event) {
     firstName,
     lastName,
     position,
-    active
+    active,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   });
   saveData();
+  syncPlayersToCloud();
   resetPlayerForm();
   renderAll();
   showToast("Joueur ajouté.", "success");
@@ -1124,6 +1215,7 @@ function deletePlayer(playerId) {
     game.lineup = game.lineup.filter((id) => id !== playerId);
   });
   saveData();
+  syncPlayersToCloud();
   renderAll();
   showToast("Joueur supprimé.", "warning");
 }
@@ -1639,7 +1731,7 @@ function renderLineup() {
       <div class="lineup-item">
         <div class="lineup-rank">${index + 1}</div>
         <div>
-          <div class="player-main">${escapeHtml(player ? formatPlayer(player) : "Joueur supprimé")}</div>
+          <div class="player-main">${escapeHtml(getPlayerDisplayName(playerId))}</div>
           <div class="player-meta"><span class="mini-badge">${escapeHtml(formatPosition(player?.position))}</span></div>
         </div>
         <button class="small-btn" onclick="removeFromLineup('${playerId}')">Retirer</button>
@@ -1795,9 +1887,12 @@ function addTeamBatterDuringGame(event) {
       firstName: $("#quickBatterFirstName").value.trim(),
       lastName: $("#quickBatterLastName").value.trim(),
       position: $("#quickBatterPosition").value || "",
-      active: true
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
     appData.team.players.push(player);
+    syncPlayersToCloud();
     playerId = player.id;
   }
 
@@ -1930,9 +2025,12 @@ function confirmTeamBatterSelection(event) {
         firstName,
         lastName,
         position: $("#quickBatterPosition").value || "",
-        active: true
+        active: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
       appData.team.players.push(player);
+      syncPlayersToCloud();
       playerId = player.id;
     }
   }
@@ -3018,6 +3116,8 @@ function makeAtBat(game, playerId, result, side) {
   return {
     id: createId("ab"),
     playerId,
+    batterId: playerId,
+    batterSnapshot: createBatterSnapshot(playerId, side, game),
     side,
     inning: game.currentInning,
     half: game.half,
@@ -4238,6 +4338,7 @@ function renderLiveBroadcastPanel(game) {
 
 function ensureLiveShareFields(game) {
   ensurePublicGameId(game);
+  syncPlayersToCloud();
   game.liveShareUrl = `${window.location.origin}${window.location.pathname}?watch=${game.publicGameId}`;
   return game.liveShareUrl;
 }
@@ -4608,6 +4709,7 @@ async function syncFullGameToCloud(game) {
   if (!game) return { success: false, error: "missing_game" };
   appLog(`Sauvegarde cloud demandée : ${game.publicGameId || game.id}`, "info");
   ensurePublicGameId(game);
+  syncPlayersToCloud();
   if (!supabaseClient || !navigator.onLine) {
     setCloudSaveState(game.id, navigator.onLine ? "pending" : "offline", true);
     return { success: false, error: "cloud_unavailable" };
@@ -4623,6 +4725,10 @@ async function syncFullGameToCloud(game) {
     currentBatterLabel: currentBatter ? displayBatterName(currentBatter, battingSide, game) : "",
     nextBatterLabel: nextBatter ? displayBatterName(nextBatter, battingSide, game) : "",
     lastAction: game.liveLastAction || game.playByPlay?.[0]?.description || "",
+    teamSnapshot: {
+      players: structuredCloneSafe(appData.team.players),
+      updatedAt
+    },
     cloudSaveStatus: "synced",
     pendingCloudSave: false,
     cloudUpdatedAt: updatedAt
@@ -4656,6 +4762,95 @@ function syncPendingCloudSaves() {
     .forEach((game) => syncFullGameToCloud(game));
 }
 
+async function syncPlayersToCloud() {
+  if (!supabaseClient || !navigator.onLine) return { success: false, error: "cloud_unavailable" };
+  const now = new Date().toISOString();
+  const rows = appData.team.players
+    .map(normalizeCloudPlayer)
+    .filter(Boolean)
+    .map((player) => ({
+      player_id: player.id,
+      player_data: {
+        ...player,
+        playerId: player.id,
+        updatedAt: player.updatedAt || now
+      },
+      updated_at: now
+    }));
+  if (!rows.length) return { success: true, count: 0 };
+  try {
+    const { error } = await supabaseClient
+      .from("team_players_cloud")
+      .upsert(rows, { onConflict: "player_id" });
+    if (error) throw error;
+    appLog(`Joueurs synchronises : ${rows.length}`, "success");
+    return { success: true, count: rows.length };
+  } catch (error) {
+    console.warn("Cloud players sync failed", error);
+    appLog(`Erreur sync joueurs : ${error.message || error}`, "error");
+    return { success: false, error };
+  }
+}
+
+async function loadPlayersFromCloud() {
+  if (!supabaseClient || !navigator.onLine) return { success: false, error: "cloud_unavailable" };
+  try {
+    const { data, error } = await supabaseClient
+      .from("team_players_cloud")
+      .select("*")
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    const cloudPlayers = (data || []).map((row) => ({
+      ...row.player_data,
+      id: row.player_id || row.player_data?.id,
+      playerId: row.player_id || row.player_data?.playerId,
+      updatedAt: row.updated_at || row.player_data?.updatedAt
+    }));
+    mergeCloudPlayersIntoLocal(cloudPlayers);
+    rebuildMissingPlayersFromGameSnapshots();
+    return { success: true, count: cloudPlayers.length };
+  } catch (error) {
+    console.warn("Cloud players load failed", error);
+    appLog(`Erreur chargement joueurs cloud : ${error.message || error}`, "error");
+    return { success: false, error };
+  }
+}
+
+function rebuildMissingPlayersFromGameSnapshots() {
+  const snapshotPlayers = [];
+  appData.games.forEach((game) => {
+    if (Array.isArray(game.teamSnapshot?.players)) snapshotPlayers.push(...game.teamSnapshot.players);
+    (game.atBats || []).forEach((atBat) => {
+      if (!atBat.batterSnapshot) return;
+      snapshotPlayers.push({
+        id: atBat.batterSnapshot.playerId || atBat.playerId,
+        playerId: atBat.batterSnapshot.playerId || atBat.playerId,
+        number: atBat.batterSnapshot.number || "",
+        firstName: atBat.batterSnapshot.firstName || "",
+        lastName: atBat.batterSnapshot.lastName || "",
+        name: atBat.batterSnapshot.name || atBat.batterSnapshot.displayName || "",
+        active: true,
+        updatedAt: atBat.timestamp || new Date().toISOString()
+      });
+    });
+  });
+  return mergeCloudPlayersIntoLocal(snapshotPlayers);
+}
+
+async function syncAllCloudData() {
+  try {
+    await syncPlayersToCloud();
+    await loadPlayersFromCloud();
+    await loadGamesFromCloud({ silent: true });
+    rebuildMissingPlayersFromGameSnapshots();
+    renderAll();
+    showToast("Joueurs, matchs et statistiques synchronises.", "success");
+  } catch (error) {
+    console.warn("Full cloud data sync failed", error);
+    showToast("Erreur de synchronisation. Certaines donnees locales peuvent etre incompletes.", "error");
+  }
+}
+
 async function fetchCloudGameByPublicId(publicGameId) {
   const code = String(publicGameId || "").trim().toUpperCase();
   if (!code) throw new Error("missing_public_game_id");
@@ -4685,12 +4880,13 @@ function mergeOrReplaceLocalGameWithCloud(cloudGame) {
   if (existingIndex >= 0) appData.games[existingIndex] = normalized;
   else appData.games.push(normalized);
   appData.currentGameId = normalized.id;
+  rebuildMissingPlayersFromGameSnapshots();
   saveData();
   renderAll();
   return normalized;
 }
 
-async function loadGamesFromCloud() {
+async function loadGamesFromCloud(options = {}) {
   if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
   if (!navigator.onLine) return showToast("Connexion requise pour charger les matchs cloud.", "warning");
 
@@ -4726,9 +4922,11 @@ async function loadGamesFromCloud() {
       }
     });
 
+    rebuildMissingPlayersFromGameSnapshots();
+
     saveData();
     renderAll();
-    showToast(mergedCount ? "Matchs cloud chargés avec succès." : "Aucun nouveau match cloud à charger.", "success");
+    if (!options.silent) showToast(mergedCount ? "Matchs cloud charges avec succes." : "Aucun nouveau match cloud a charger.", "success");
   } catch (error) {
     console.warn("Cloud games load failed", error);
     showToast("Impossible de charger les matchs cloud. Vérifiez votre connexion.", "error");
@@ -4736,6 +4934,7 @@ async function loadGamesFromCloud() {
 }
 
 function initializePublicData() {
+  loadPlayersFromCloud();
   loadPublicGamesFromCloud();
 }
 
@@ -4761,6 +4960,7 @@ async function loadPublicGamesFromCloud() {
       if (existingIndex >= 0) appData.games[existingIndex] = cloudGame;
       else appData.games.push(cloudGame);
     });
+    rebuildMissingPlayersFromGameSnapshots();
     saveData();
     renderAll();
   } catch (error) {
@@ -4881,6 +5081,7 @@ async function loadGameFromCloud(publicGameId) {
     }
 
     appData.currentGameId = cloudGame.id;
+    rebuildMissingPlayersFromGameSnapshots();
     saveData();
     closeResumeGameModal();
     renderAll();
@@ -4941,6 +5142,7 @@ function calculateStatsForSide(game, side) {
   getAtBatList(game, side).forEach((atBat) => {
     if (!statsMap.has(atBat.playerId)) statsMap.set(atBat.playerId, emptyStat(atBat.playerId));
     const stat = statsMap.get(atBat.playerId);
+    if (atBat.batterSnapshot && !stat.batterSnapshot) stat.batterSnapshot = atBat.batterSnapshot;
     accumulateAtBatIntoStat(stat, atBat, game.id || game.publicGameId);
   });
 
@@ -4950,6 +5152,7 @@ function calculateStatsForSide(game, side) {
 function emptyStat(playerId) {
   return {
     playerId,
+    batterSnapshot: null,
     gamesPlayed: 0,
     gameIds: new Set(),
     ab: 0,
@@ -4980,12 +5183,14 @@ function calculateSeasonStats() {
     .forEach((game) => {
       (game.atBats || []).forEach((atBat) => {
         if (!statsMap.has(atBat.playerId)) statsMap.set(atBat.playerId, emptyStat(atBat.playerId));
-        accumulateAtBatIntoStat(statsMap.get(atBat.playerId), atBat, game.id || game.publicGameId);
+        const stat = statsMap.get(atBat.playerId);
+        if (atBat.batterSnapshot && !stat.batterSnapshot) stat.batterSnapshot = atBat.batterSnapshot;
+        accumulateAtBatIntoStat(stat, atBat, game.id || game.publicGameId);
       });
     });
   return Array.from(statsMap.values())
     .filter((stat) => stat.plateAppearances || appData.team.players.some((player) => player.id === stat.playerId))
-    .sort((a, b) => statPlayerName(a.playerId, "team").localeCompare(statPlayerName(b.playerId, "team")))
+    .sort((a, b) => statPlayerName(a.playerId, "team", a.batterSnapshot).localeCompare(statPlayerName(b.playerId, "team", b.batterSnapshot)))
     .map(finalizeStat);
 }
 
@@ -5036,6 +5241,10 @@ function finalizeStat(stat) {
 }
 
 function renderStats() {
+  if (!statsCloudPlayersRequested && supabaseClient && navigator.onLine) {
+    statsCloudPlayersRequested = true;
+    loadPlayersFromCloud().then(() => renderStats());
+  }
   const game = getGameForDisplay();
   if (activeStatsView === "game") {
     renderGameStatsScreen(selectedStatsGameId);
@@ -5085,7 +5294,7 @@ function renderStatsRows(stats, side) {
   const totals = getStatsTotals(stats);
   const rows = stats.map((stat) => `
     <tr>
-      <td>${side === "team" ? `<button class="link-button" onclick="openPlayerStats('${stat.playerId}')">${escapeHtml(statPlayerName(stat.playerId, side))}</button>` : escapeHtml(statPlayerName(stat.playerId, side))}</td>
+      <td>${side === "team" ? `<button class="link-button" onclick="openPlayerStats('${stat.playerId}')">${escapeHtml(statPlayerName(stat.playerId, side, stat.batterSnapshot))}</button>` : escapeHtml(statPlayerName(stat.playerId, side, stat.batterSnapshot))}</td>
       <td>${stat.gamesPlayed}</td><td>${stat.ab}</td><td>${stat.hit}</td><td>${stat.single}</td><td>${stat.double}</td>
       <td>${stat.triple}</td><td>${stat.hr}</td><td>${stat.bb}</td><td>${stat.strikeout}</td><td>${stat.sacrifice}</td>
       <td>${stat.fieldersChoice}</td><td>${stat.rbi}</td><td>${stat.run}</td><td>${stat.plateAppearances}</td><td class="avg-cell">${stat.avg}</td><td>${stat.obp}</td><td>${stat.slg}</td><td>${stat.ops}</td>
@@ -5634,6 +5843,7 @@ function renderAdminDashboard() {
         <h3>Cloud</h3>
         <p>${escapeHtml(game ? cloudSaveStatusLabel(game) : "Aucune partie active")}</p>
         <div class="home-card-actions">
+          <button class="primary-btn" onclick="syncAllCloudData()">Synchroniser données cloud</button>
           <button class="primary-btn" onclick="loadGamesFromCloud()">Charger matchs cloud</button>
           <button onclick="refreshCurrentGameFromCloud()">Rafraîchir partie active</button>
         </div>
@@ -6484,7 +6694,7 @@ function findOpponentBatter(game, batterId) {
 
 function formatPlayer(player) {
   const number = player.number ? `#${player.number} ` : "";
-  const name = `${player.firstName || ""} ${player.lastName || ""}`.trim();
+  const name = `${player.firstName || ""} ${player.lastName || ""}`.trim() || player.name || "";
   return `${number}${name || "Joueur sans nom"}`.trim();
 }
 
@@ -6506,6 +6716,40 @@ function displayShortBatterName(batter, side, game = getGameForDisplay()) {
   return side === "opponent" ? opponentBatterName(batter, game) : shortPlayerName(batter);
 }
 
+function getPlayerDisplayName(playerId, fallbackSnapshot = null) {
+  const player = findPlayer(playerId);
+  if (player) return formatPlayer(player);
+  const snapshot = fallbackSnapshot || findBatterSnapshotForPlayer(playerId);
+  if (snapshot) {
+    if (snapshot.displayName) return snapshot.displayName;
+    const cleanNumber = String(snapshot.number || "").replace(/^#/, "").trim();
+    const number = cleanNumber ? `#${cleanNumber} ` : "";
+    const name = snapshot.name || `${snapshot.firstName || ""} ${snapshot.lastName || ""}`.trim();
+    if (name) return `${number}${name}`.trim();
+    if (cleanNumber) return `Joueur #${cleanNumber}`;
+  }
+  return "Joueur inconnu";
+}
+
+function findBatterSnapshotForPlayer(playerId) {
+  for (const game of appData.games) {
+    const snapshotPlayer = game.teamSnapshot?.players?.find((player) => player.id === playerId || player.playerId === playerId);
+    if (snapshotPlayer) {
+      return {
+        playerId,
+        number: snapshotPlayer.number || "",
+        firstName: snapshotPlayer.firstName || "",
+        lastName: snapshotPlayer.lastName || "",
+        name: snapshotPlayer.name || "",
+        displayName: formatPlayer(snapshotPlayer)
+      };
+    }
+    const atBat = (game.atBats || []).find((item) => item.playerId === playerId && item.batterSnapshot);
+    if (atBat?.batterSnapshot) return atBat.batterSnapshot;
+  }
+  return null;
+}
+
 function runnerName(playerId, game = getCurrentGame()) {
   if (!playerId) return "Vide";
   const player = findPlayer(playerId);
@@ -6518,13 +6762,12 @@ function opponentRunnerName(playerId, game = getCurrentGame()) {
   return batter ? opponentBatterName(batter, game) : "Vide";
 }
 
-function statPlayerName(playerId, side) {
+function statPlayerName(playerId, side, fallbackSnapshot = null) {
   const game = getGameForDisplay();
   if (side === "opponent") {
     return opponentBatterName(findOpponentBatter(game, playerId), game);
   }
-  const player = findPlayer(playerId);
-  return player ? formatPlayer(player) : "Joueur supprimé";
+  return getPlayerDisplayName(playerId, fallbackSnapshot);
 }
 
 function formatPosition(position) {
