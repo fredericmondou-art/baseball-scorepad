@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-25-v3";
+const APP_VERSION_FALLBACK = "2026-05-25-v4";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -280,6 +280,7 @@ function setupForms() {
   $("#oppMinusBtn").addEventListener("click", () => adjustOpponentScore(-1));
   $("#printBtn").addEventListener("click", () => window.print());
   $("#loadCloudGamesBtn")?.addEventListener("click", loadGamesFromCloud);
+  $("#syncAllCloudDataBtn")?.addEventListener("click", syncAllCloudData);
   $("#forceAppUpdateBtn")?.addEventListener("click", forceAppUpdate);
   $("#resetDataBtn").addEventListener("click", resetAllData);
   $("#exportDataBtn").addEventListener("click", exportData);
@@ -861,6 +862,8 @@ function normalizeGame(game) {
     atBats: normalizeAtBats(game.atBats),
     opponentAtBats: normalizeAtBats(game.opponentAtBats),
     teamSnapshot: game.teamSnapshot || null,
+    deleted: game.deleted === true,
+    deletedAt: game.deletedAt || null,
     playByPlay: Array.isArray(game.playByPlay) ? game.playByPlay : [],
     scoreTeam: Number(game.scoreTeam || 0),
     scoreOpponent: Number(game.scoreOpponent || 0),
@@ -979,6 +982,7 @@ function normalizeCloudPlayer(player) {
   const firstName = player.firstName || "";
   const lastName = player.lastName || "";
   const number = String(player.number || "").replace(/^#/, "").trim();
+  const deleted = player.deleted === true || player.status === "deleted";
   return {
     id,
     playerId: id,
@@ -987,8 +991,10 @@ function normalizeCloudPlayer(player) {
     lastName,
     name: player.name || `${firstName} ${lastName}`.trim(),
     position: player.position || "",
-    active: player.active !== false && player.status !== "inactive",
-    status: player.status || (player.active === false ? "inactive" : "active"),
+    active: !deleted && player.active !== false && player.status !== "inactive",
+    status: deleted ? "deleted" : (player.status || (player.active === false ? "inactive" : "active")),
+    deleted,
+    deletedAt: player.deletedAt || null,
     createdAt: player.createdAt || now,
     updatedAt: player.updatedAt || now
   };
@@ -1078,7 +1084,8 @@ function normalizeAtBats(atBats) {
 }
 
 function getCurrentGame() {
-  return appData.games.find((game) => game.id === appData.currentGameId) || null;
+  const game = appData.games.find((item) => item.id === appData.currentGameId) || null;
+  return game && !isGameDeleted(game) ? game : null;
 }
 
 function updateCurrentGame(updatedGame, options = {}) {
@@ -1091,7 +1098,8 @@ function updateCurrentGame(updatedGame, options = {}) {
 }
 
 function getGameForDisplay() {
-  return getCurrentGame() || appData.games[appData.games.length - 1] || null;
+  const activeGames = getActiveGames();
+  return getCurrentGame() || activeGames[activeGames.length - 1] || null;
 }
 
 function normalizeGameStatus(status) {
@@ -1105,11 +1113,20 @@ function normalizeGameStatus(status) {
   if (["preparation", "brouillon", "draft", "partie creee"].includes(value)) return "preparation";
   if (["terminee", "termine", "completed", "joue", "jouee"].includes(value)) return "completed";
   if (["annule", "annulee", "cancelled", "canceled"].includes(value)) return "cancelled";
+  if (["deleted", "supprime", "supprimee"].includes(value)) return "deleted";
   return value || "preparation";
 }
 
+function isGameDeleted(game) {
+  return Boolean(game?.deleted || normalizeGameStatus(game?.status) === "deleted");
+}
+
+function getActiveGames() {
+  return appData.games.filter((game) => !isGameDeleted(game));
+}
+
 function canOpenLiveMatch(game) {
-  return normalizeGameStatus(game?.status) === "in_progress";
+  return !isGameDeleted(game) && normalizeGameStatus(game?.status) === "in_progress";
 }
 
 function snapshotGame(game) {
@@ -1158,7 +1175,16 @@ function savePlayerFromForm(event) {
   if (editingId) {
     const player = appData.team.players.find((item) => item.id === editingId);
     if (!player) return showToast("Joueur introuvable.", "error");
-    Object.assign(player, { number, firstName, lastName, position, active, updatedAt: new Date().toISOString() });
+    Object.assign(player, {
+      number,
+      firstName,
+      lastName,
+      position,
+      active,
+      status: active ? "active" : "inactive",
+      deleted: false,
+      updatedAt: new Date().toISOString()
+    });
     saveData();
     syncPlayersToCloud();
     resetPlayerForm();
@@ -1173,6 +1199,8 @@ function savePlayerFromForm(event) {
     lastName,
     position,
     active,
+    status: active ? "active" : "inactive",
+    deleted: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -1209,19 +1237,84 @@ function resetPlayerForm() {
 }
 
 function deletePlayer(playerId) {
-  if (!confirm("Supprimer ce joueur?")) return;
-  appData.team.players = appData.team.players.filter((player) => player.id !== playerId);
+  confirmDeletePlayer(playerId);
+}
+
+function playerHasStats(playerId) {
+  return appData.games.some((game) => (
+    !isGameDeleted(game) &&
+    [...(game.atBats || []), ...(game.opponentAtBats || [])].some((atBat) => atBat.playerId === playerId || atBat.batterId === playerId)
+  ));
+}
+
+function confirmDeletePlayer(playerId) {
+  const player = findPlayer(playerId);
+  if (!player) return showToast("Joueur introuvable.", "error");
+  const choice = prompt(`Que voulez-vous faire avec ${formatPlayer(player)} ?\n\n1 = Désactiver le joueur\n2 = Supprimer définitivement\n\nTapez 1 ou 2.`);
+  if (choice === null) return;
+  if (choice === "1") return deactivatePlayer(playerId);
+  if (choice === "2") return permanentlyDeletePlayer(playerId);
+  showToast("Choix annulé.", "info");
+}
+
+function deactivatePlayer(playerId) {
+  const player = findPlayer(playerId);
+  if (!player) return showToast("Joueur introuvable.", "error");
+  Object.assign(player, {
+    active: false,
+    status: "inactive",
+    deleted: false,
+    updatedAt: new Date().toISOString()
+  });
+  saveData();
+  syncPlayersToCloud();
+  renderAll();
+  showToast("Joueur désactivé. Ses statistiques restent visibles.", "success");
+}
+
+function permanentlyDeletePlayer(playerId) {
+  const player = findPlayer(playerId);
+  if (!player) return showToast("Joueur introuvable.", "error");
+  if (playerHasStats(playerId)) {
+    showToast("Ce joueur possède des statistiques. Il peut être désactivé, mais pas supprimé définitivement.", "warning");
+    return deactivatePlayer(playerId);
+  }
+  const confirmed = confirm(`Supprimer définitivement ${formatPlayer(player)} ?`);
+  if (!confirmed) return;
+  Object.assign(player, {
+    active: false,
+    status: "deleted",
+    deleted: true,
+    deletedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
   appData.games.forEach((game) => {
     game.lineup = game.lineup.filter((id) => id !== playerId);
   });
   saveData();
   syncPlayersToCloud();
   renderAll();
-  showToast("Joueur supprimé.", "warning");
+  showToast("Joueur retiré définitivement de l'interface.", "warning");
+}
+
+function reactivatePlayer(playerId) {
+  const player = findPlayer(playerId);
+  if (!player) return showToast("Joueur introuvable.", "error");
+  Object.assign(player, {
+    active: true,
+    status: "active",
+    deleted: false,
+    deletedAt: null,
+    updatedAt: new Date().toISOString()
+  });
+  saveData();
+  syncPlayersToCloud();
+  renderAll();
+  showToast("Joueur réactivé.", "success");
 }
 
 function renderPlayers() {
-  const players = appData.team.players;
+  const players = appData.team.players.filter((player) => player.deleted !== true);
   $("#playersCount").textContent = `${players.length} joueur${players.length > 1 ? "s" : ""}`;
   $("#playersList").innerHTML = players.length ? players.map((player) => `
     <div class="player-card ${player.active === false ? "muted-card" : ""}">
@@ -1230,12 +1323,13 @@ function renderPlayers() {
         <div class="player-main">${escapeHtml(formatPlayer(player))}</div>
         <div class="player-meta">
           <span class="mini-badge">${escapeHtml(formatPosition(player.position))}</span>
-          <span>${player.active === false ? "Inactif" : "Actif"}</span>
+          <span>${getPlayerStatusLabel(player.id)}</span>
         </div>
       </div>
       <div class="row-actions">
         <button class="small-btn secondary-btn" onclick="editPlayer('${player.id}')">Modifier</button>
-        <button class="small-btn danger-btn" onclick="deletePlayer('${player.id}')">Supprimer</button>
+        ${player.active === false || player.status === "inactive" ? `<button class="small-btn primary-btn" onclick="reactivatePlayer('${player.id}')">Réactiver</button>` : ""}
+        <button class="small-btn danger-btn" onclick="deletePlayer('${player.id}')">Désactiver / Supprimer</button>
       </div>
     </div>
   `).join("") : `<div class="empty-state">Aucun joueur pour le moment. Ajoutez vos joueurs avant de créer une partie.</div>`;
@@ -1294,7 +1388,7 @@ function saveCalendarEventFromForm(event) {
 }
 
 function renderCalendar() {
-  const events = getSortedCalendarEvents();
+  const events = getSortedCalendarEvents().filter((event) => normalizeGameStatus(event.status) !== "deleted");
   const upcoming = events.filter((event) => normalizeGameStatus(event.status) !== "completed" && normalizeGameStatus(event.status) !== "cancelled");
   const played = events.filter((event) => normalizeGameStatus(event.status) === "completed");
   const cancelled = events.filter((event) => normalizeGameStatus(event.status) === "cancelled");
@@ -1335,13 +1429,22 @@ function getSortedCalendarEvents() {
 
 function calendarEventActions(event) {
   const linkedGame = event.linkedGameId ? appData.games.find((game) => game.id === event.linkedGameId) : null;
+  if (linkedGame && isGameDeleted(linkedGame)) {
+    return "";
+  }
   if (!linkedGame) {
     return `<button class="small-btn primary-btn" onclick="createGameFromCalendarEvent('${event.id}')">Créer partie</button>`;
   }
   if (normalizeGameStatus(linkedGame.status) === "completed") {
-    return `<button class="small-btn primary-btn" onclick="openReportForGame('${linkedGame.id}')">Voir rapport</button>`;
+    return `
+    <button class="small-btn secondary-btn" onclick="openEditGameModal('${linkedGame.id}')">Modifier partie</button>
+    <button class="small-btn danger-btn" onclick="confirmDeleteGame('${linkedGame.id}')">Supprimer partie</button>
+    <button class="small-btn primary-btn" onclick="openReportForGame('${linkedGame.id}')">Voir rapport</button>
+  `;
   }
   return `
+    <button class="small-btn secondary-btn" onclick="openEditGameModal('${linkedGame.id}')">Modifier partie</button>
+    <button class="small-btn danger-btn" onclick="confirmDeleteGame('${linkedGame.id}')">Supprimer partie</button>
     <button class="small-btn secondary-btn" onclick="openLinkedGameLineup('${linkedGame.id}')">Préparer alignement</button>
     <button class="small-btn primary-btn" onclick="openLinkedGameMatch('${linkedGame.id}')">Ouvrir match</button>
   `;
@@ -1409,7 +1512,7 @@ function createGameFromCalendarEvent(eventId) {
   const event = appData.calendar.find((item) => item.id === eventId);
   if (!event) return;
 
-  if (event.linkedGameId && appData.games.some((game) => game.id === event.linkedGameId)) {
+  if (event.linkedGameId && appData.games.some((game) => game.id === event.linkedGameId && !isGameDeleted(game))) {
     appData.currentGameId = event.linkedGameId;
     saveData();
     showScreen("lineup");
@@ -1448,6 +1551,8 @@ function createGameFromCalendarEvent(eventId) {
 
 function openLinkedGameLineup(gameId) {
   if (!isAdminAuthenticated()) return showScreen("admin");
+  const game = appData.games.find((item) => item.id === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
   appData.currentGameId = gameId;
   saveData();
   openLineupForCurrentGame();
@@ -1455,12 +1560,16 @@ function openLinkedGameLineup(gameId) {
 
 function openLinkedGameMatch(gameId) {
   if (!isAdminAuthenticated()) return showScreen("admin");
+  const game = appData.games.find((item) => item.id === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
   appData.currentGameId = gameId;
   saveData();
   openMatchForCurrentGame();
 }
 
 function openReportForGame(gameId) {
+  const game = appData.games.find((item) => item.id === gameId || item.publicGameId === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
   if (!isAdminAuthenticated()) return openGameStats(gameId);
   appData.currentGameId = gameId;
   saveData();
@@ -1468,7 +1577,8 @@ function openReportForGame(gameId) {
 }
 
 function openReportForCurrentGame() {
-  const game = getCurrentGame() || appData.games[appData.games.length - 1] || null;
+  const activeGames = getActiveGames();
+  const game = getCurrentGame() || activeGames[activeGames.length - 1] || null;
   if (!game) return showToast("Aucun rapport disponible.", "warning");
   appData.currentGameId = game.id;
   saveData();
@@ -1624,6 +1734,8 @@ function buildGame({ date, time = "", opponent, field, gameType = "", notes = ""
     cloudUpdatedAt: null,
     pendingCloudSave: false,
     history: [],
+    deleted: false,
+    deletedAt: null,
     status
   });
 }
@@ -1709,7 +1821,7 @@ function renderLineup() {
   const game = getCurrentGame();
   const lineup = game?.lineup || [];
   const selected = new Set(lineup);
-  const available = appData.team.players.filter((player) => player.active !== false && !selected.has(player.id));
+  const available = appData.team.players.filter((player) => player.deleted !== true && player.status !== "inactive" && player.active !== false && !selected.has(player.id));
   if (game) renderExpectedLineupSettings(game);
 
   $("#availablePlayers").innerHTML = game?.lineupMode === "dynamic"
@@ -2050,8 +2162,10 @@ function confirmOpponentBatterNumber() {
 
 function findTeamPlayerBySearch(value) {
   const search = String(value || "").trim().toLowerCase();
-  if (!search) return appData.team.players.filter((player) => player.active !== false);
+  if (!search) return appData.team.players.filter((player) => player.deleted !== true && player.status !== "inactive" && player.active !== false);
   return appData.team.players.filter((player) => (
+    player.deleted !== true &&
+    player.status !== "inactive" &&
     player.active !== false &&
     [player.number, player.firstName, player.lastName, formatPlayer(player)]
       .some((item) => String(item || "").toLowerCase().includes(search))
@@ -3808,7 +3922,7 @@ function renderNoActiveMatchState() {
       <p>Pour marquer une partie, créez d'abord un match à partir du calendrier, puis démarrez la partie.</p>
       <div class="form-actions">
         <button class="primary-btn" onclick="openCalendar()">Ouvrir le calendrier</button>
-        ${appData.games.some((game) => normalizeGameStatus(game.status) === "preparation") ? `<button onclick="openFirstPreparationGame()">Voir les parties en préparation</button>` : ""}
+        ${getActiveGames().some((game) => normalizeGameStatus(game.status) === "preparation") ? `<button onclick="openFirstPreparationGame()">Voir les parties en préparation</button>` : ""}
       </div>
     </div>
   `;
@@ -3828,6 +3942,8 @@ function renderGamePreparationState(game) {
       </div>
       <div class="form-actions">
         <button onclick="openLineupForCurrentGame()">Préparer l'alignement</button>
+        <button onclick="openEditGameModal('${game.id}')">Modifier la partie</button>
+        <button class="danger-btn" onclick="confirmDeleteGame('${game.id}')">Supprimer la partie</button>
         <button class="primary-btn" onclick="startCurrentGame()">Démarrer le match</button>
       </div>
     </div>
@@ -3848,6 +3964,8 @@ function renderCompletedGameState(game) {
       </div>
       <div class="form-actions">
         <button class="primary-btn" onclick="openReportForCurrentGame()">Voir rapport</button>
+        <button onclick="openEditGameModal('${game.id}')">Modifier la partie</button>
+        <button class="danger-btn" onclick="confirmDeleteGame('${game.id}')">Supprimer la partie</button>
         <button onclick="openCalendar()">Ouvrir le calendrier</button>
       </div>
     </div>
@@ -3855,7 +3973,7 @@ function renderCompletedGameState(game) {
 }
 
 function openFirstPreparationGame() {
-  const game = appData.games.find((item) => normalizeGameStatus(item.status) === "preparation");
+  const game = getActiveGames().find((item) => normalizeGameStatus(item.status) === "preparation");
   if (!game) return openCalendar();
   appData.currentGameId = game.id;
   saveData();
@@ -4328,6 +4446,8 @@ function renderLiveBroadcastPanel(game) {
       <div class="home-card-actions">
         <button onclick="copyResumeCode()">Copier le code</button>
         <button onclick="copyResumeShareLink()">Copier le lien de reprise</button>
+        <button onclick="openEditGameModal('${game.id}')">Modifier la partie</button>
+        <button class="danger-btn" onclick="confirmDeleteGame('${game.id}')">Supprimer la partie</button>
         <button onclick="refreshCurrentGameFromCloud()">Rafraîchir depuis le cloud</button>
         <button onclick="subscribeToCurrentCloudGame()">Sync temps réel marqueur</button>
         <button class="primary-btn" onclick="syncFullGameToCloud(getCurrentGame())">Synchroniser cloud</button>
@@ -4636,6 +4756,14 @@ function handleCloudGameUpdate(payload) {
   });
   const current = getCurrentGame();
   const incomingDeviceId = cloudGame.scorerLock?.deviceId || cloudGame.activeScorerDevice;
+  if (isGameDeleted(cloudGame)) {
+    mergeOrReplaceLocalGameWithCloud(cloudGame);
+    if (appData.currentGameId === cloudGame.id) appData.currentGameId = null;
+    saveData();
+    renderAll();
+    showToast("Cette partie a été supprimée sur le cloud.", "warning");
+    return;
+  }
   if (current?.publicGameId === code && isCurrentDeviceActiveScorer(current)) {
     if (incomingDeviceId === getDeviceId()) return;
     mergeOrReplaceLocalGameWithCloud(cloudGame);
@@ -4886,6 +5014,92 @@ function mergeOrReplaceLocalGameWithCloud(cloudGame) {
   return normalized;
 }
 
+function validateGameUpdates(updates) {
+  if (!updates.date) return "La date est obligatoire.";
+  if (!updates.opponent) return "L'adversaire est obligatoire.";
+  if (!Number.isFinite(Number(updates.innings)) || Number(updates.innings) < 1) return "Le nombre de manches doit être valide.";
+  if (updates.runLimitEnabled && (!updates.runLimitPerInning || Number(updates.runLimitPerInning) < 1)) return "La limite de points doit être valide.";
+  return "";
+}
+
+function openEditGameModal(gameId) {
+  const game = appData.games.find((item) => item.id === gameId || item.publicGameId === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
+  if ((game.atBats?.length || game.opponentAtBats?.length || game.playByPlay?.length) && !confirm("Cette partie contient déjà des actions. Voulez-vous vraiment modifier ses informations?")) return;
+
+  const updates = {
+    date: prompt("Date du match (AAAA-MM-JJ)", game.date || "") ?? game.date,
+    time: prompt("Heure du match", game.time || "") ?? game.time,
+    opponent: prompt("Adversaire", game.opponent || "") ?? game.opponent,
+    field: prompt("Terrain / lieu", game.field || "") ?? game.field,
+    homeAway: prompt("Domicile ou visiteur (local/visiteur)", game.homeAway || "local") ?? game.homeAway,
+    status: prompt("Statut (préparation/en cours/terminée)", game.status || "préparation") ?? game.status,
+    innings: Number(prompt("Nombre de manches", game.innings || DEFAULT_INNINGS) ?? game.innings || DEFAULT_INNINGS),
+    notes: prompt("Notes du match", game.notes || "") ?? game.notes
+  };
+  const runLimitAnswer = prompt("Limite de points par manche? Tapez oui ou non.", game.runLimitEnabled ? "oui" : "non");
+  updates.runLimitEnabled = String(runLimitAnswer || "").trim().toLowerCase().startsWith("o");
+  updates.runLimitPerInning = updates.runLimitEnabled
+    ? Number(prompt("Maximum de points par manche", game.runLimitPerInning || 5) || game.runLimitPerInning || 5)
+    : null;
+
+  const error = validateGameUpdates(updates);
+  if (error) return showToast(error, "warning");
+  updateGame(game.id, updates);
+}
+
+function updateGame(gameId, updates) {
+  const game = appData.games.find((item) => item.id === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
+  Object.assign(game, {
+    ...updates,
+    updatedAt: new Date().toISOString(),
+    runLimitPerInning: updates.runLimitEnabled ? Number(updates.runLimitPerInning || 5) : null
+  });
+  const linkedEvent = appData.calendar.find((event) => event.linkedGameId === game.id || event.id === game.linkedGameId);
+  if (linkedEvent) Object.assign(linkedEvent, {
+    date: game.date,
+    time: game.time,
+    opponent: game.opponent,
+    field: game.field,
+    homeAway: game.homeAway,
+    status: game.status,
+    innings: game.innings,
+    runLimitEnabled: game.runLimitEnabled,
+    runLimitPerInning: game.runLimitPerInning,
+    notes: game.notes
+  });
+  updateCurrentGame(game, { syncLive: game.liveEnabled });
+  renderAll();
+  showToast("Partie modifiée.", "success");
+}
+
+function confirmDeleteGame(gameId) {
+  const game = appData.games.find((item) => item.id === gameId || item.publicGameId === gameId);
+  if (!game || isGameDeleted(game)) return showToast("Partie introuvable.", "error");
+  if (!confirm("Voulez-vous vraiment supprimer cette partie? Cette action retirera le match de vos statistiques cumulées.")) return;
+  const hasActions = Boolean((game.atBats || []).length || (game.opponentAtBats || []).length || (game.playByPlay || []).length);
+  if (hasActions) {
+    const typed = prompt("Cette partie contient des présences au bâton et du play-by-play. Tapez SUPPRIMER pour confirmer.");
+    if (typed !== "SUPPRIMER") return showToast("Suppression annulée.", "info");
+  }
+  softDeleteGame(game.id);
+}
+
+function softDeleteGame(gameId) {
+  const game = appData.games.find((item) => item.id === gameId);
+  if (!game) return;
+  game.deleted = true;
+  game.deletedAt = new Date().toISOString();
+  game.status = "deleted";
+  if (appData.currentGameId === game.id) appData.currentGameId = null;
+  const linkedEvent = appData.calendar.find((event) => event.linkedGameId === game.id || event.id === game.linkedGameId);
+  if (linkedEvent) linkedEvent.status = "Supprimé";
+  saveGameEverywhere(game, { syncLive: true, cloud: true });
+  renderAll();
+  showToast("Partie supprimée.", "warning");
+}
+
 async function loadGamesFromCloud(options = {}) {
   if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
   if (!navigator.onLine) return showToast("Connexion requise pour charger les matchs cloud.", "warning");
@@ -4922,6 +5136,9 @@ async function loadGamesFromCloud(options = {}) {
       }
     });
 
+    if (appData.currentGameId && !getCurrentGame()) {
+      appData.currentGameId = null;
+    }
     rebuildMissingPlayersFromGameSnapshots();
 
     saveData();
@@ -4981,6 +5198,13 @@ async function refreshCurrentGameFromCloud() {
     const comparison = compareCloudAndLocalVersions(game, cloudRecord);
     if (comparison !== "cloud_newer") {
       return showToast("Votre version locale est déjà à jour ou plus récente.", "info");
+    }
+    if (isGameDeleted(cloudRecord.cloudGame)) {
+      mergeOrReplaceLocalGameWithCloud(cloudRecord.cloudGame);
+      if (appData.currentGameId === game.id) appData.currentGameId = null;
+      saveData();
+      renderAll();
+      return showToast("La version cloud indique que cette partie est supprimée.", "warning");
     }
     const shouldReplace = confirm("Remplacer la version locale par la version cloud la plus récente ?");
     if (!shouldReplace) return showToast("Version locale conservée.", "info");
@@ -5059,6 +5283,9 @@ async function loadGameFromCloud(publicGameId) {
       pendingCloudSave: false,
       cloudUpdatedAt: data.updated_at || data.game_data.cloudUpdatedAt || null
     });
+    if (isGameDeleted(cloudGame)) {
+      return showToast("Cette partie a été supprimée.", "warning");
+    }
     const existingIndex = appData.games.findIndex((game) => game.publicGameId === code || game.id === cloudGame.id);
     if (existingIndex >= 0) {
       const localGame = appData.games[existingIndex];
@@ -5136,7 +5363,7 @@ function calculateOpponentStats(game) {
 function calculateStatsForSide(game, side) {
   const ids = side === "opponent"
     ? game.opponentLineup.map((batter) => batter.id)
-    : (game.lineup.length ? game.lineup : appData.team.players.map((player) => player.id));
+    : (game.lineup.length ? game.lineup : appData.team.players.filter((player) => player.deleted !== true).map((player) => player.id));
   const statsMap = new Map(ids.map((playerId) => [playerId, emptyStat(playerId)]));
 
   getAtBatList(game, side).forEach((atBat) => {
@@ -5177,7 +5404,8 @@ function emptyStat(playerId) {
 }
 
 function calculateSeasonStats() {
-  const statsMap = new Map(appData.team.players.map((player) => [player.id, emptyStat(player.id)]));
+  const visiblePlayers = appData.team.players.filter((player) => player.deleted !== true);
+  const statsMap = new Map(visiblePlayers.map((player) => [player.id, emptyStat(player.id)]));
   appData.games
     .filter(shouldIncludeGameInSeasonStats)
     .forEach((game) => {
@@ -5189,7 +5417,7 @@ function calculateSeasonStats() {
       });
     });
   return Array.from(statsMap.values())
-    .filter((stat) => stat.plateAppearances || appData.team.players.some((player) => player.id === stat.playerId))
+    .filter((stat) => stat.plateAppearances || visiblePlayers.some((player) => player.id === stat.playerId))
     .sort((a, b) => statPlayerName(a.playerId, "team", a.batterSnapshot).localeCompare(statPlayerName(b.playerId, "team", b.batterSnapshot)))
     .map(finalizeStat);
 }
@@ -5199,6 +5427,7 @@ function calculatePlayerSeasonStats(playerId) {
 }
 
 function shouldIncludeGameInSeasonStats(game) {
+  if (isGameDeleted(game)) return false;
   const status = normalizeGameStatus(game?.status);
   const hasActions = Boolean((game?.atBats || []).length || (game?.opponentAtBats || []).length);
   return hasActions && ["in_progress", "completed"].includes(status);
@@ -5381,8 +5610,9 @@ function renderRecentGamesStatsView() {
               ])}
             </div>
             <div class="home-card-actions">
-              <button class="secondary-btn" onclick="openLinkedGameMatch('${game.id}')">Voir stats du match</button>
+              <button class="secondary-btn" onclick="openGameStats('${game.id}')">Voir stats du match</button>
               <button class="primary-btn" onclick="openReportForGame('${game.id}')">Rapport</button>
+              ${isAdminAuthenticated() ? `<button onclick="openEditGameModal('${game.id}')">Modifier</button><button class="danger-btn" onclick="confirmDeleteGame('${game.id}')">Supprimer</button>` : ""}
             </div>
           </article>
         `;
@@ -5431,7 +5661,7 @@ function renderPlayerStatsDetail(playerId) {
 }
 
 function getPlayerAtBatsByGame(playerId) {
-  return appData.games
+  return getActiveGames()
     .map((game) => ({
       game,
       atBats: (game.atBats || []).filter((atBat) => atBat.playerId === playerId)
@@ -5460,7 +5690,11 @@ function formatPlayerGameLine(item) {
 
 function renderGameStatsScreen(gameId) {
   const game = appData.games.find((item) => item.id === gameId || item.publicGameId === gameId);
-  if (!game) return;
+  if (!game || isGameDeleted(game)) {
+    showToast("Partie introuvable.", "error");
+    activeStatsView = "season";
+    return renderStats();
+  }
   const stats = calculateGameStats(game);
   $$(".stats-view-btn").forEach((button) => button.classList.remove("active"));
   $("#statsSummary").innerHTML = `
@@ -5919,7 +6153,7 @@ function ensureAdminBeforeScoring() {
 function renderPublicLiveScreen() {
   const container = $("#publicLiveContent");
   if (!container) return;
-  const liveGames = appData.games.filter((game) => normalizeGameStatus(game.status) === "in_progress");
+  const liveGames = getActiveGames().filter((game) => normalizeGameStatus(game.status) === "in_progress");
   const game = getCurrentLiveGame() || liveGames[0] || getRecentGames(1)[0];
   if (!game) {
     container.innerHTML = `<div class="empty-state">Aucun match disponible. <button onclick="loadGamesFromCloud()">Charger les matchs</button></div>`;
@@ -5929,7 +6163,7 @@ function renderPublicLiveScreen() {
 }
 
 function getCurrentLiveGame() {
-  return appData.games.find((game) => normalizeGameStatus(game.status) === "in_progress") || null;
+  return getActiveGames().find((game) => normalizeGameStatus(game.status) === "in_progress") || null;
 }
 
 function renderSpectatorGame(game, liveGames = []) {
@@ -6026,7 +6260,7 @@ function summaryRows(rows) {
 }
 
 function renderPublicCurrentGameCard() {
-  const liveGame = getCurrentLiveGame() || appData.games.find((game) => normalizeGameStatus(game.status) === "in_progress");
+  const liveGame = getCurrentLiveGame() || getActiveGames().find((game) => normalizeGameStatus(game.status) === "in_progress");
   if (!liveGame) {
     return `
       <article class="home-card dashboard-card">
@@ -6054,7 +6288,7 @@ function renderPublicCurrentGameCard() {
 function renderHomeScreen() {
   const record = calculateTeamRecord();
   const upcoming = getUpcomingCalendarEvents(5);
-  const activePlayers = appData.team.players.filter((player) => player.active !== false).length;
+  const activePlayers = appData.team.players.filter((player) => player.deleted !== true && player.status !== "inactive" && player.active !== false).length;
 
   $("#homeTopGrid").innerHTML = `
     ${renderPublicCurrentGameCard()}
@@ -6064,7 +6298,7 @@ function renderHomeScreen() {
         ${recordStat("Victoires", record.wins)}
         ${recordStat("Defaites", record.losses)}
         ${recordStat("Nuls", record.ties)}
-        ${recordStat("Parties sauvegardees", appData.games.length)}
+        ${recordStat("Parties sauvegardees", getActiveGames().length)}
         ${recordStat("Joueurs actifs", activePlayers)}
       </div>
     </article>
@@ -6094,7 +6328,7 @@ function renderHome() {
 }
 
 function getRecentGames(limit = 5) {
-  return [...appData.games]
+  return getActiveGames()
     .filter((game) => (game.atBats?.length || game.opponentAtBats?.length || normalizeGameStatus(game.status) !== "preparation"))
     .sort((a, b) => {
       const bTime = new Date(b.cloudUpdatedAt || b.updatedAt || b.date || 0).getTime();
@@ -6128,6 +6362,10 @@ function renderRecentGameCard(game) {
   const primaryAction = status === "in_progress"
     ? `<button class="small-btn primary-btn" onclick="openLiveGame('${game.publicGameId || ""}')">Suivre live</button>`
     : `<button class="small-btn primary-btn" onclick="openGameStats('${game.id}')">Voir stats</button>`;
+  const adminActions = isAdminAuthenticated() ? `
+        <button class="small-btn secondary-btn" onclick="openEditGameModal('${game.id}')">Modifier</button>
+        <button class="small-btn danger-btn" onclick="confirmDeleteGame('${game.id}')">Supprimer</button>
+      ` : "";
   return `
     <div class="upcoming-item recent-game-item">
       <div>
@@ -6141,6 +6379,7 @@ function renderRecentGameCard(game) {
       <div class="row-actions">
         <button class="small-btn secondary-btn" onclick="openGameStats('${game.id}')">Stats du match</button>
         ${primaryAction}
+        ${adminActions}
       </div>
     </div>
   `;
@@ -6159,7 +6398,7 @@ function recordStat(label, value) {
 }
 
 function calculateTeamRecord() {
-  const completed = appData.games.filter((game) => normalizeGameStatus(game.status) === "completed");
+  const completed = getActiveGames().filter((game) => normalizeGameStatus(game.status) === "completed");
   const totals = completed.reduce((record, game) => {
     const team = Number(game.scoreTeam || 0);
     const opponent = Number(game.scoreOpponent || 0);
@@ -6187,13 +6426,14 @@ function getUpcomingCalendarEvents(limit = 5) {
   return getSortedCalendarEvents()
     .filter((event) => {
       const status = normalizeGameStatus(event.status);
-      return (event.date || "") >= today && status !== "cancelled" && status !== "completed";
+      return (event.date || "") >= today && status !== "cancelled" && status !== "completed" && status !== "deleted";
     })
     .slice(0, limit);
 }
 
 function renderUpcomingEvent(event) {
   const linkedGame = event.linkedGameId ? appData.games.find((game) => game.id === event.linkedGameId) : null;
+  if (linkedGame && isGameDeleted(linkedGame)) return "";
   const status = linkedGame ? normalizeGameStatus(linkedGame.status) : normalizeGameStatus(event.status);
   const action = linkedGame && status === "in_progress"
     ? `<button class="small-btn primary-btn" onclick="openLiveGame('${linkedGame.publicGameId || ""}')">Suivre live</button>`
@@ -6729,6 +6969,13 @@ function getPlayerDisplayName(playerId, fallbackSnapshot = null) {
     if (cleanNumber) return `Joueur #${cleanNumber}`;
   }
   return "Joueur inconnu";
+}
+
+function getPlayerStatusLabel(playerId) {
+  const player = findPlayer(playerId);
+  if (!player) return "Inconnu";
+  if (player.deleted === true || player.status === "deleted") return "Supprimé";
+  return player.active === false || player.status === "inactive" ? "Inactif" : "Actif";
 }
 
 function findBatterSnapshotForPlayer(playerId) {
