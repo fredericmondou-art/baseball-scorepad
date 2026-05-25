@@ -1,9 +1,12 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-25-v1";
+const APP_VERSION_FALLBACK = "2026-05-25-v2";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
 const ADMIN_SESSION_KEY = "baseballScorepadAdminAuthenticated";
+const DEVICE_ID_STORAGE_KEY = "baseballScorepadDeviceId";
+const SCORER_HEARTBEAT_MS = 25000;
+const SCORER_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmanRiY3BzZXB5anBqc2dkbXNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDE3NzIsImV4cCI6MjA5NDY3Nzc3Mn0.Yjdry3UljJsdFDeDa2onyBoePR023OCLjw05f2Klw14";
 const TEAM_BRANDING = {
@@ -94,6 +97,8 @@ let spectatorGameState = null;
 let spectatorPlayByPlay = [];
 let spectatorSubscriptions = [];
 let cloudSyncTimers = {};
+let scorerHeartbeatTimer = null;
+let scorerReadOnlyMode = false;
 let safeMobileMode = false;
 let appDiagnostics = {
   loadTime: new Date().toISOString(),
@@ -248,6 +253,7 @@ function openMatchForCurrentGame() {
     showScreen("live");
     return;
   }
+  if (isAdminAuthenticated() && normalizeGameStatus(game.status) === "in_progress") acquireScorerLock(game);
   showScreen("live");
 }
 
@@ -1601,6 +1607,7 @@ function startCurrentGame() {
   game.outs = 0;
   game.bases = { first: null, second: null, third: null };
   game.currentBattingSide = getBattingSide(game);
+  prepareScoringSession(game);
   updateCurrentGame(game, { syncLive: true });
   showScreen("live");
   showToast(game.lineupMode === "dynamic" ? "Partie démarrée. L'alignement sera construit pendant la partie." : "Partie démarrée.", "success");
@@ -2321,6 +2328,7 @@ function selectOutType(type) {
 function recordAtBat(action, defensePlay = null, batterConfirmed = false, confirmedMovements = null, confirmedRbi = null) {
   const game = getCurrentGame();
   if (!batterConfirmed) return confirmBatterBeforeAction(action, defensePlay);
+  if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour scorer cette partie.", "warning");
   if (!game || game.status === "terminée") return showToast("Aucune partie active.", "warning");
 
   const side = getBattingSide(game);
@@ -2896,6 +2904,7 @@ function confirmRunnerMovementModal() {
 function openEditRunnersModal() {
   const game = getCurrentGame();
   if (!game || normalizeGameStatus(game.status) === "completed") return showToast("Aucune partie active.", "warning");
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
   $("#editRunnersError").textContent = "";
   $("#editRunnersRows").innerHTML = ["1B", "2B", "3B"].map((base) => renderManualRunnerRow(base, game)).join("");
   renderManualRunnerNumberInputs();
@@ -2951,6 +2960,7 @@ function renderManualRunnerNumberInputs() {
 function applyManualBaseEdit() {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
   const selectedIds = [];
   const nextBases = { first: null, second: null, third: null };
   for (const select of $$("#editRunnersRows [data-manual-base]")) {
@@ -3165,6 +3175,7 @@ function nextBatter(game, side) {
 function endHalfInning(shouldSnapshot) {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour changer de demi-manche.", "warning");
   if (shouldSnapshot) snapshotGame(game);
 
   game.outs = 0;
@@ -3196,6 +3207,7 @@ function endHalfInning(shouldSnapshot) {
 function adjustOpponentScore(delta) {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier le score.", "warning");
   snapshotGame(game);
   ensureInningScore(game, game.currentInning);
   const inning = game.inningScores[game.currentInning - 1];
@@ -3237,9 +3249,15 @@ function adjustOpponentScore(delta) {
 function finishGame() {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour terminer la partie.", "warning");
   if (!confirm("Terminer la partie?")) return;
   snapshotGame(game);
   game.status = "terminée";
+  if (game.scorerLock?.deviceId === getDeviceId()) {
+    game.scorerLock = null;
+    game.activeScorerDevice = null;
+    stopScorerHeartbeat();
+  }
   const calendarEvent = appData.calendar.find((event) => event.linkedGameId === game.id || event.id === game.linkedGameId);
   if (calendarEvent) calendarEvent.status = "Joué";
   const playEvent = createPlayByPlayEvent(game, {
@@ -3259,6 +3277,7 @@ function finishGame() {
 
 function undoLastAction() {
   const game = getCurrentGame();
+  if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour annuler une action.", "warning");
   if (!game || !game.history.length) return showToast("Aucune action à annuler.", "warning");
   const previous = game.history.pop();
   previous.history = game.history;
@@ -3270,6 +3289,7 @@ function undoLastAction() {
 function editLastAction() {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier une action.", "warning");
   const last = [...game.atBats, ...game.opponentAtBats]
     .filter((atBat) => Array.isArray(atBat.runnerMovements) && atBat.runnerMovements.length)
     .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")))[0];
@@ -3387,6 +3407,7 @@ function renderLive() {
   renderCompactInteractiveBases(game);
   renderMobileSituationDetails(game);
   renderLastActionCard(game);
+  updateScoringControlState(game);
 }
 
 function renderMobileGameScoreboard(game) {
@@ -3603,6 +3624,7 @@ function closeBaseActionMenu() {
 
 function moveRunnerFromBase(base, destination) {
   const game = getCurrentGame();
+  if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
   const fromKey = movementBaseKey(base);
   const runnerId = game?.bases[fromKey];
   if (!game || !runnerId) return;
@@ -3620,6 +3642,7 @@ function moveRunnerFromBase(base, destination) {
 function clearBase(base) {
   const game = getCurrentGame();
   if (!game) return;
+  if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
   updateCurrentGame(game, { syncLive: true });
@@ -3629,6 +3652,7 @@ function clearBase(base) {
 
 function removeRunnerFromBase(base) {
   const game = getCurrentGame();
+  if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
   if (!game?.bases[movementBaseKey(base)]) return;
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
@@ -4166,6 +4190,8 @@ function renderLiveBroadcastPanel(game) {
   const resumeCode = ensurePublicGameId(game);
   const resumeUrl = getResumeShareUrl(game);
   const cloudStatus = cloudSaveStatusLabel(game);
+  const scorerLockStatus = renderScorerLockBadge(game);
+  const scorerLockWarning = renderScorerLockWarning(game);
   panel.innerHTML = `
     <div class="live-broadcast-card ${game.liveEnabled ? "active" : ""}">
       <div>
@@ -4190,6 +4216,8 @@ function renderLiveBroadcastPanel(game) {
         <h3>Reprise multi-appareils</h3>
         <p>Utilisez ce code ou ce lien pour continuer la partie sur un autre appareil.</p>
       </div>
+      ${scorerLockStatus}
+      ${scorerLockWarning}
       <div class="resume-code-block">
         <span>Code de reprise</span>
         <strong>${escapeHtml(resumeCode)}</strong>
@@ -4292,6 +4320,235 @@ function copyResumeShareLink() {
   copyTextToClipboard(getResumeShareUrl(game), "Lien de reprise copié.");
 }
 
+function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+  if (!id) {
+    id = `device_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+    localStorage.setItem(DEVICE_ID_STORAGE_KEY, id);
+  }
+  return id;
+}
+
+function getDeviceName() {
+  const ua = navigator.userAgent || "";
+  if (/iphone/i.test(ua)) return "iPhone";
+  if (/ipad/i.test(ua)) return "iPad";
+  if (/android/i.test(ua)) return /mobile/i.test(ua) ? "Telephone Android" : "Tablette Android";
+  if (/macintosh|windows|linux/i.test(ua)) return "Ordinateur";
+  return "Appareil marqueur";
+}
+
+function formatLockTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "inconnue";
+  return date.toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" });
+}
+
+function isScorerLockExpired(lock) {
+  if (!lock?.lastSeenAt) return true;
+  const lastSeen = new Date(lock.lastSeenAt).getTime();
+  if (Number.isNaN(lastSeen)) return true;
+  return Date.now() - lastSeen > SCORER_LOCK_TIMEOUT_MS;
+}
+
+function isCurrentDeviceActiveScorer(game = getCurrentGame()) {
+  if (!game?.scorerLock) return false;
+  return game.scorerLock.deviceId === getDeviceId() && !isScorerLockExpired(game.scorerLock) && !scorerReadOnlyMode;
+}
+
+function checkScorerLock(game = getCurrentGame()) {
+  if (!game?.scorerLock || isScorerLockExpired(game.scorerLock)) return "available";
+  if (game.scorerLock.deviceId === getDeviceId()) return "mine";
+  return "other";
+}
+
+function setScorerReadOnlyMode(enabled) {
+  scorerReadOnlyMode = Boolean(enabled);
+  document.body.classList.toggle("scorer-read-only", scorerReadOnlyMode);
+  if (scorerReadOnlyMode) stopScorerHeartbeat();
+  updateScoringControlState(getCurrentGame());
+}
+
+function canCurrentDeviceScore(game = getCurrentGame()) {
+  if (!game || normalizeGameStatus(game.status) !== "in_progress") return true;
+  return isCurrentDeviceActiveScorer(game);
+}
+
+function prepareScoringSession(game = getCurrentGame()) {
+  if (!game || normalizeGameStatus(game.status) !== "in_progress") return true;
+  const state = checkScorerLock(game);
+  if (state === "other") {
+    setScorerReadOnlyMode(true);
+    updateSyncStatusUI(game);
+    return false;
+  }
+  if (state === "available") {
+    const now = new Date().toISOString();
+    game.scorerLock = {
+      deviceId: getDeviceId(),
+      deviceName: getDeviceName(),
+      lockedAt: now,
+      lastSeenAt: now
+    };
+    game.activeScorerDevice = game.scorerLock.deviceId;
+    scorerReadOnlyMode = false;
+    document.body.classList.remove("scorer-read-only");
+    saveGameEverywhere(game, { syncLive: false, cloud: true });
+    startScorerHeartbeat(game);
+  }
+  if (state === "mine") startScorerHeartbeat(game);
+  return true;
+}
+
+async function acquireScorerLock(game = getCurrentGame()) {
+  if (!game) return false;
+  const state = checkScorerLock(game);
+  if (state === "other") {
+    setScorerReadOnlyMode(true);
+    updateSyncStatusUI(game);
+    showToast("Cette partie est deja marquee sur un autre appareil.", "warning");
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  game.scorerLock = {
+    deviceId: getDeviceId(),
+    deviceName: getDeviceName(),
+    lockedAt: state === "mine" ? (game.scorerLock.lockedAt || now) : now,
+    lastSeenAt: now
+  };
+  game.activeScorerDevice = game.scorerLock.deviceId;
+  setScorerReadOnlyMode(false);
+  saveLocalData();
+  await syncFullGameToCloud(game);
+  subscribeToCloudGame(ensurePublicGameId(game), { silent: true });
+  startScorerHeartbeat(game);
+  renderAll();
+  return true;
+}
+
+async function takeOverScorerLock(game = getCurrentGame()) {
+  if (!game) return;
+  const owner = game.scorerLock?.deviceName || "un autre appareil";
+  const ok = confirm(`Prendre le relais de ${owner} ? L'autre appareil passera en lecture seule au prochain rafraichissement.`);
+  if (!ok) return;
+  game.scorerLock = null;
+  setScorerReadOnlyMode(false);
+  await acquireScorerLock(game);
+  showToast("Vous etes maintenant le marqueur actif.", "success");
+}
+
+async function releaseScorerLock(game = getCurrentGame()) {
+  if (!game?.scorerLock || game.scorerLock.deviceId !== getDeviceId()) return;
+  game.scorerLock = null;
+  game.activeScorerDevice = null;
+  stopScorerHeartbeat();
+  saveLocalData();
+  await syncFullGameToCloud(game);
+  updateSyncStatusUI(game);
+}
+
+function startScorerHeartbeat(game = getCurrentGame()) {
+  stopScorerHeartbeat();
+  if (!game || !isCurrentDeviceActiveScorer(game)) return;
+  scorerHeartbeatTimer = setInterval(() => {
+    const latest = getCurrentGame();
+    if (!latest || !isCurrentDeviceActiveScorer(latest)) return stopScorerHeartbeat();
+    latest.scorerLock.lastSeenAt = new Date().toISOString();
+    latest.activeScorerDevice = latest.scorerLock.deviceId;
+    saveLocalData();
+    syncFullGameToCloud(latest);
+  }, SCORER_HEARTBEAT_MS);
+}
+
+function stopScorerHeartbeat() {
+  if (scorerHeartbeatTimer) clearInterval(scorerHeartbeatTimer);
+  scorerHeartbeatTimer = null;
+}
+
+function renderScorerLockBadge(game = getCurrentGame()) {
+  if (!game || normalizeGameStatus(game.status) !== "in_progress") return "";
+  const state = checkScorerLock(game);
+  if (state === "mine") return `<div class="scorer-lock-badge active">Marqueur actif : cet appareil</div>`;
+  if (state === "other") {
+    const lock = game.scorerLock;
+    return `<div class="scorer-lock-badge warning">Marqueur actif : ${escapeHtml(lock.deviceName || "autre appareil")} · derniere activite ${escapeHtml(formatLockTime(lock.lastSeenAt))}</div>`;
+  }
+  return `<div class="scorer-lock-badge neutral">Aucun marqueur actif</div>`;
+}
+
+function renderScorerLockWarning(game = getCurrentGame()) {
+  if (!game || checkScorerLock(game) !== "other") return "";
+  const lock = game.scorerLock;
+  return `
+    <div class="scorer-lock-warning">
+      <strong>Cette partie est actuellement marquee par : ${escapeHtml(lock.deviceName || "autre appareil")}.</strong>
+      <p>Derniere activite : ${escapeHtml(formatLockTime(lock.lastSeenAt))}. Vous pouvez consulter en lecture seule ou prendre le relais.</p>
+      <div class="home-card-actions">
+        <button onclick="setScorerReadOnlyMode(true);renderAll()">Voir en lecture seule</button>
+        <button class="primary-btn" onclick="takeOverScorerLock(getCurrentGame())">Prendre le relais</button>
+      </div>
+    </div>
+  `;
+}
+
+function updateScoringControlState(game = getCurrentGame()) {
+  const readonly = Boolean(game && normalizeGameStatus(game.status) === "in_progress" && !isCurrentDeviceActiveScorer(game));
+  const selectors = [
+    ".hit-actions button",
+    "#endHalfBtn",
+    "#editRunnersBtn",
+    "#oppPlusBtn",
+    "#oppMinusBtn",
+    "#undoBtn",
+    "#finishGameBtn",
+    "#mobileQuickActionBar button",
+    "#mobileMoreActionsPanel button",
+    "#baseActionMenu button",
+    "#lastActionCard button"
+  ];
+  selectors.forEach((selector) => {
+    $$(selector).forEach((button) => {
+      button.disabled = readonly;
+      button.classList.toggle("read-only-disabled", readonly);
+    });
+  });
+}
+
+function compareCloudAndLocalVersions(game, cloudRecord) {
+  const localUpdated = game?.cloudUpdatedAt ? new Date(game.cloudUpdatedAt).getTime() : 0;
+  const cloudUpdated = cloudRecord?.updatedAt ? new Date(cloudRecord.updatedAt).getTime() : 0;
+  if (cloudUpdated && (!localUpdated || cloudUpdated > localUpdated)) return "cloud_newer";
+  if (localUpdated && cloudUpdated && localUpdated > cloudUpdated) return "local_newer";
+  return "same";
+}
+
+function handleCloudGameUpdate(payload) {
+  if (!payload?.new?.game_data) return;
+  const code = payload.new.public_game_id || payload.new.game_data.publicGameId;
+  const cloudGame = normalizeGame({
+    ...payload.new.game_data,
+    publicGameId: code,
+    cloudSaveStatus: "synced",
+    pendingCloudSave: false,
+    cloudUpdatedAt: payload.new.updated_at || payload.new.game_data.cloudUpdatedAt || null
+  });
+  const current = getCurrentGame();
+  const incomingDeviceId = cloudGame.scorerLock?.deviceId || cloudGame.activeScorerDevice;
+  if (current?.publicGameId === code && isCurrentDeviceActiveScorer(current)) {
+    if (incomingDeviceId === getDeviceId()) return;
+    mergeOrReplaceLocalGameWithCloud(cloudGame);
+    setScorerReadOnlyMode(true);
+    showToast("Un autre appareil a pris le relais. Mode lecture seule active.", "warning");
+    return;
+  }
+  mergeOrReplaceLocalGameWithCloud(cloudGame);
+  const merged = getCurrentGame();
+  setScorerReadOnlyMode(checkScorerLock(merged) === "other");
+  showScreen("live");
+  showToast(scorerReadOnlyMode ? "Version cloud chargee en lecture seule." : "Nouvelle version cloud chargee.", "success");
+}
+
 function handleResumeParamOnLoad(publicGameId) {
   if (!publicGameId) return;
   if (!isAdminAuthenticated()) {
@@ -4304,6 +4561,7 @@ function handleResumeParamOnLoad(publicGameId) {
 
 function cloudSaveStatusLabel(game) {
   if (!navigator.onLine) return "Hors ligne — sauvegarde locale active";
+  if (game.cloudSaveStatus === "remote_available") return "Nouvelle version cloud disponible";
   if (game.cloudSaveStatus === "error" || game.cloudSaveStatus === "offline") return "Erreur cloud — sauvegarde locale active";
   if (game.pendingCloudSave || game.cloudSaveStatus === "pending") return "Sauvegarde cloud en cours...";
   if (game.cloudSaveStatus === "synced") return `Cloud à jour${game.cloudUpdatedAt ? ` · ${formatCloudSaveTime(game.cloudUpdatedAt)}` : ""}`;
@@ -4520,14 +4778,17 @@ async function refreshCurrentGameFromCloud() {
   try {
     const cloudRecord = await fetchCloudGameByPublicId(code);
     if (!cloudRecord) return showToast("Aucune version cloud trouvée pour cette partie.", "warning");
-    const localUpdated = game.cloudUpdatedAt ? new Date(game.cloudUpdatedAt).getTime() : 0;
-    const cloudUpdated = cloudRecord.updatedAt ? new Date(cloudRecord.updatedAt).getTime() : 0;
-    if (localUpdated && cloudUpdated && localUpdated >= cloudUpdated) {
+    const comparison = compareCloudAndLocalVersions(game, cloudRecord);
+    if (comparison !== "cloud_newer") {
       return showToast("Votre version locale est déjà à jour ou plus récente.", "info");
     }
     const shouldReplace = confirm("Remplacer la version locale par la version cloud la plus récente ?");
     if (!shouldReplace) return showToast("Version locale conservée.", "info");
-    mergeOrReplaceLocalGameWithCloud(cloudRecord.cloudGame);
+    const merged = mergeOrReplaceLocalGameWithCloud(cloudRecord.cloudGame);
+    if (merged && isAdminAuthenticated()) {
+      if (checkScorerLock(merged) === "other") setScorerReadOnlyMode(true);
+      else acquireScorerLock(merged);
+    }
     showScreen("live");
     showToast("Partie rafraîchie depuis le cloud.", "success");
   } catch (error) {
@@ -4536,7 +4797,7 @@ async function refreshCurrentGameFromCloud() {
   }
 }
 
-function subscribeToCloudGame(publicGameId) {
+function subscribeToCloudGame(publicGameId, options = {}) {
   const code = String(publicGameId || "").trim().toUpperCase();
   if (!code) return showToast("Aucune partie active à synchroniser.", "warning");
   if (!supabaseClient) return showToast("Supabase n'est pas disponible sur cet appareil.", "error");
@@ -4548,23 +4809,9 @@ function subscribeToCloudGame(publicGameId) {
       schema: "public",
       table: "saved_games_cloud",
       filter: `public_game_id=eq.${code}`
-    }, (payload) => {
-      if (!payload?.new?.game_data) return;
-      const cloudGame = normalizeGame({
-        ...payload.new.game_data,
-        publicGameId: code,
-        cloudSaveStatus: "synced",
-        pendingCloudSave: false,
-        cloudUpdatedAt: payload.new.updated_at || payload.new.game_data.cloudUpdatedAt || null
-      });
-      const shouldLoad = confirm("Une nouvelle version cloud est disponible. Charger ?");
-      if (!shouldLoad) return showToast("Nouvelle version cloud disponible.", "info");
-      mergeOrReplaceLocalGameWithCloud(cloudGame);
-      showScreen("live");
-      showToast("Nouvelle version cloud chargée.", "success");
-    })
+    }, handleCloudGameUpdate)
     .subscribe();
-  showToast("Synchronisation temps réel marqueur activée.", "success");
+  if (!options.silent) showToast("Synchronisation temps reel marqueur activee.", "success");
 }
 
 function subscribeToCurrentCloudGame() {
@@ -4624,6 +4871,7 @@ async function loadGameFromCloud(publicGameId) {
           saveData();
           closeResumeGameModal();
           showScreen("live");
+          if (isAdminAuthenticated()) acquireScorerLock(localGame);
           return showToast("Version locale conservée.", "info");
         }
       }
@@ -4637,6 +4885,7 @@ async function loadGameFromCloud(publicGameId) {
     closeResumeGameModal();
     renderAll();
     showScreen("live");
+    if (isAdminAuthenticated()) acquireScorerLock(getCurrentGame());
     showToast("Partie chargée avec succès.", "success");
   } catch (error) {
     console.warn("Cloud game load failed", error);
@@ -5302,7 +5551,9 @@ function isAdminAuthenticated() {
 }
 
 function logoutAdmin() {
+  releaseScorerLock(getCurrentGame());
   sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  setScorerReadOnlyMode(false);
   showScreen("admin");
   showToast("Déconnexion Admin effectuée.", "info");
 }
@@ -5410,6 +5661,8 @@ function renderAdminDashboard() {
 
 function openScorerMode() {
   if (!isAdminAuthenticated()) return showScreen("admin");
+  const game = getCurrentGame();
+  if (game && normalizeGameStatus(game.status) === "in_progress") acquireScorerLock(game);
   showScreen("live");
 }
 
@@ -5440,7 +5693,14 @@ function openDiagnostics() {
 }
 
 function ensureAdminBeforeScoring() {
-  if (isAdminAuthenticated()) return true;
+  if (isAdminAuthenticated()) {
+    const game = getCurrentGame();
+    if (game && !prepareScoringSession(game)) {
+      showToast("Mode lecture seule : prenez le relais pour scorer cette partie.", "warning");
+      return false;
+    }
+    return true;
+  }
   showScreen("admin");
   return false;
 }

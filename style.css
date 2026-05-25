@@ -613,6 +613,48 @@ main {
   gap: 14px;
 }
 
+.scorer-lock-badge,
+.scorer-lock-warning {
+  border: 1px solid rgba(18, 59, 99, 0.14);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7fafc;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.scorer-lock-badge.active {
+  border-color: rgba(17, 114, 72, 0.35);
+  background: #e9f8ef;
+  color: #12623c;
+}
+
+.scorer-lock-badge.warning,
+.scorer-lock-warning {
+  border-color: rgba(182, 92, 18, 0.32);
+  background: #fff6e8;
+  color: #7c3f07;
+}
+
+.scorer-lock-warning {
+  display: grid;
+  gap: 10px;
+}
+
+.scorer-lock-warning p {
+  margin: 0;
+  font-weight: 600;
+}
+
+body.scorer-read-only .actions-panel,
+body.scorer-read-only .mobile-quick-action-bar {
+  opacity: 0.72;
+}
+
+.read-only-disabled {
+  cursor: not-allowed;
+}
+
 .resume-code-block {
   display: grid;
   gap: 4px;
