@@ -3107,7 +3107,7 @@ textarea {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .debug-title-row,
   .debug-columns {
     display: grid;
@@ -3124,7 +3124,7 @@ textarea {
 
   body {
     font-size: 16px;
-    padding-bottom: 88px;
+    padding-bottom: 116px;
   }
 
   .app-header,
@@ -3136,7 +3136,7 @@ textarea {
 
   #screen-live {
     overflow-x: clip;
-    padding-bottom: 24px;
+    padding-bottom: 108px;
   }
 
   #liveLayout {
@@ -3144,16 +3144,7 @@ textarea {
   }
 
   .mobile-scorer-tabs {
-    position: static;
-    z-index: 8;
-    display: grid;
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-    padding: 6px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: rgba(255,255,255,0.96);
+    display: none;
   }
 
   .mobile-scorer-tabs button {
@@ -3172,28 +3163,25 @@ textarea {
   #liveLayout[data-mobile-tab="scoring"] .field-card,
   #liveLayout[data-mobile-tab="history"] .live-panel,
   #liveLayout[data-mobile-tab="history"] .actions-panel {
+    display: block;
+  }
+
+  #liveLayout .actions-panel,
+  #liveInfo,
+  #liveBroadcastPanel,
+  .field-card .field-heading,
+  .field-card .diamond {
     display: none;
   }
 
-  #liveLayout[data-mobile-tab="history"] .field-card .field-heading,
-  #liveLayout[data-mobile-tab="history"] .field-card .diamond {
-    display: none;
-  }
-
-  #liveLayout[data-mobile-tab="situation"] .live-broadcast-panel {
-    display: none;
-  }
-
-  #liveLayout[data-mobile-tab="situation"] #liveInfo {
-    display: none;
-  }
-
+  .scoreboard-card .scoreboard,
   #liveLayout[data-mobile-tab="situation"] .scoreboard {
     display: none;
   }
 
   .scoreboard-card {
     padding: 14px;
+    border-radius: 8px;
   }
 
   .mobile-game-scoreboard {
@@ -3259,6 +3247,25 @@ textarea {
 
   .mobile-situation-details {
     display: block;
+  }
+
+  .live-panel,
+  .field-card {
+    display: grid;
+    gap: 10px;
+  }
+
+  .field-card {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .play-by-play-panel {
+    margin-top: 0;
+    padding: 13px;
+    border-radius: 8px;
   }
 
   .mobile-situation-detail-card {
@@ -3414,7 +3421,9 @@ textarea {
   }
 
   .field-card .last-action-card {
-    order: -1;
+    order: 0;
+    margin-top: 0;
+    border-radius: 8px;
   }
 
   .edit-runner-row,

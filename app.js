@@ -868,7 +868,7 @@ function normalizeGame(game) {
     currentInning: Number(game.currentInning || 1),
     half: game.half || "haut",
     outs: Number(game.outs || 0),
-    bases: game.bases || { first: null, second: null, third: null },
+    bases: normalizeGameBases(game.bases),
     currentBatterIndex: Number(game.currentBatterIndex || 0),
     currentOpponentBatterIndex: Number(game.currentOpponentBatterIndex || 0),
     currentBattingSide: game.currentBattingSide || "team",
@@ -897,6 +897,15 @@ function normalizeGame(game) {
     pendingCloudSave: game.pendingCloudSave === true,
     history: Array.isArray(game.history) ? game.history : [],
     status: game.status || "préparation"
+  };
+}
+
+function normalizeGameBases(bases) {
+  const source = bases && typeof bases === "object" ? bases : {};
+  return {
+    first: source.first || null,
+    second: source.second || null,
+    third: source.third || null
   };
 }
 
@@ -3435,8 +3444,19 @@ function renderLive() {
     $("#outsDots").innerHTML = renderOutDots(0);
     renderBases(null);
     renderPlayByPlay(game);
+    renderMobileQuickActionBar(null);
+    renderCompactInteractiveBases(null);
+    renderMobileSituationDetails(null);
+    renderLastActionCard(null);
     return;
   }
+
+  game.bases = normalizeGameBases(game.bases);
+  game.atBats = Array.isArray(game.atBats) ? game.atBats : [];
+  game.opponentAtBats = Array.isArray(game.opponentAtBats) ? game.opponentAtBats : [];
+  game.playByPlay = Array.isArray(game.playByPlay) ? game.playByPlay : [];
+  appData.team = appData.team || { name: "Mon equipe", players: [] };
+  appData.team.players = Array.isArray(appData.team.players) ? appData.team.players : [];
 
   renderMatchScreen(game);
   game.currentBattingSide = getBattingSide(game);
@@ -3597,19 +3617,25 @@ function formatHalfInningSummary(game) {
 
 function renderMobileSituationDetails(game) {
   const details = $("#mobileSituationDetails");
-  if (!details || !game) return;
+  if (!details) return;
+  if (!game) {
+    details.innerHTML = "";
+    return;
+  }
+  const side = getBattingSide(game);
+  const addedBatters = side === "team" ? (game.lineup || []).length : (game.opponentLineup || []).length;
   details.innerHTML = `
     <section class="mobile-situation-detail-card">
       <h3>Détails de la situation</h3>
       <dl>
         <div><dt>Équipe au bâton</dt><dd>${escapeHtml(getBattingSideLabel(game))}</dd></div>
         <div><dt>Frappeur actuel</dt><dd>${escapeHtml(getCurrentBatterLabel(game))}</dd></div>
-        <div><dt>Mode adverse</dt><dd>${escapeHtml(game.opponentTrackingMode === "complete" ? "Complet" : "Simplifié")}</dd></div>
+        <div><dt>Prochain frappeur</dt><dd>${escapeHtml(getNextBatterLabel(game))}</dd></div>
         <div><dt>Alignement</dt><dd>${escapeHtml(renderLineupStatusSummary(game))}</dd></div>
-        <div><dt>Limite</dt><dd>${escapeHtml(renderRunLimitSummary(game))}</dd></div>
+        <div><dt>Frappeurs ajoutes</dt><dd>${addedBatters}</dd></div>
+        <div><dt>Limite de points</dt><dd>${escapeHtml(renderRunLimitSummary(game))}</dd></div>
         <div><dt>Points demi-manche</dt><dd>${getCurrentHalfInningRuns(game)}</dd></div>
-        <div class="wide"><dt>Dernière action</dt><dd>${escapeHtml(renderLastActionSummary(game))}</dd></div>
-        <div class="wide"><dt>Sauvegarde</dt><dd>${escapeHtml(cloudSaveStatusLabel(game))}</dd></div>
+        <div><dt>Statut cloud</dt><dd>${escapeHtml(cloudSaveStatusLabel(game))}</dd></div>
       </dl>
     </section>
   `;
@@ -3669,9 +3695,8 @@ function openMoreActionsPanel() {
       <button type="button" onclick="triggerScorerAction('hr')">Circuit</button>
       <button type="button" onclick="triggerScorerAction('error')">Erreur</button>
       <button type="button" onclick="triggerScorerAction('sacrifice')">Sacrifice</button>
-      <button type="button" onclick="triggerScorerAction('fielderschoice')">FC</button>
+      <button type="button" onclick="triggerScorerAction('fielderschoice')">Choix defensif</button>
       <button type="button" onclick="triggerScorerAction('doubleplay')">Double jeu</button>
-      <button type="button" onclick="triggerScorerAction('runnerout')">Retrait coureur</button>
       <button type="button" onclick="closeMoreActionsPanel();openEditRunnersModal()">Modifier coureurs</button>
       <button type="button" onclick="closeMoreActionsPanel();endHalfInning(true)">Fin demi-manche</button>
     </div>
@@ -3686,14 +3711,18 @@ function closeMoreActionsPanel() {
 function renderCompactInteractiveBases(game) {
   const field = $("#mobileSituationField");
   if (!field) return;
-  if (!game) return field.innerHTML = "";
+  if (!game) {
+    field.innerHTML = "";
+    return;
+  }
+  game.bases = normalizeGameBases(game.bases);
   field.innerHTML = `
     <div class="compact-interactive-field">
       ${["2B", "3B", "1B"].map((base) => {
         const runnerId = game.bases[movementBaseKey(base)];
         return `<button type="button" class="compact-base compact-${base.toLowerCase()}" onclick="openBaseActionMenu('${base}')"><strong>${base}</strong><span>${escapeHtml(runnerId ? runnerName(runnerId, game) : "Vide")}</span></button>`;
       }).join("")}
-      <button type="button" class="compact-base compact-home" onclick="openEditRunnersModal()"><strong>Marbre</strong><span>Modifier</span></button>
+      <button type="button" class="compact-base compact-home" onclick="openEditRunnersModal()"><strong>Marbre</strong><span>${escapeHtml(getCurrentBatterLabel(game))}</span></button>
     </div>
   `;
 }
@@ -3702,16 +3731,39 @@ function openBaseActionMenu(base) {
   const game = getCurrentGame();
   const menu = $("#baseActionMenu");
   if (!game || !menu) return;
+  game.bases = normalizeGameBases(game.bases);
   const runnerId = game.bases[movementBaseKey(base)];
-  const destinations = base === "1B" ? ["2B", "3B", "home"] : base === "2B" ? ["3B", "home"] : ["home"];
   menu.innerHTML = `
     <div class="base-action-card">
-      <div class="mobile-more-title"><strong>${base} : ${escapeHtml(runnerId ? runnerName(runnerId, game) : "Vide")}</strong><button type="button" onclick="closeBaseActionMenu()">Fermer</button></div>
+      <div class="mobile-more-title"><strong>${base} : ${escapeHtml(runnerId ? runnerName(runnerId, game) : "Vide")}</strong></div>
       <div class="mobile-more-grid">
-        <button type="button" onclick="closeBaseActionMenu();openEditRunnersModal()">Modifier le joueur</button>
-        ${runnerId ? destinations.map((destination) => `<button type="button" onclick="moveRunnerFromBase('${base}','${destination}')">Vers ${destination === "home" ? "Marbre" : destination}</button>`).join("") : ""}
-        ${runnerId ? `<button type="button" onclick="removeRunnerFromBase('${base}')">Retirer</button>` : ""}
+        <button type="button" onclick="openBaseMoveMenu('${base}')">Deplacer</button>
+        <button type="button" onclick="removeRunnerFromBase('${base}')">Retirer</button>
+        <button type="button" onclick="scoreRunnerFromBase('${base}')">Marquer</button>
         <button type="button" onclick="clearBase('${base}')">Vider la base</button>
+        <button type="button" onclick="closeBaseActionMenu()">Annuler</button>
+      </div>
+    </div>
+  `;
+  menu.classList.remove("hidden");
+}
+
+function openBaseMoveMenu(base) {
+  const game = getCurrentGame();
+  const menu = $("#baseActionMenu");
+  if (!game || !menu) return;
+  game.bases = normalizeGameBases(game.bases);
+  const runnerId = game.bases[movementBaseKey(base)];
+  if (!runnerId) return showToast("Cette base est vide.", "info");
+  const destinations = base === "1B" ? ["2B", "3B"] : base === "2B" ? ["3B"] : [];
+  if (!destinations.length) return showToast("Utilisez Marquer pour envoyer ce coureur au marbre.", "info");
+  menu.innerHTML = `
+    <div class="base-action-card">
+      <div class="mobile-more-title"><strong>Deplacer ${escapeHtml(runnerName(runnerId, game))}</strong></div>
+      <div class="mobile-more-grid">
+        ${destinations.map((destination) => `<button type="button" onclick="moveRunnerFromBase('${base}','${destination}')">Vers ${destination}</button>`).join("")}
+        <button type="button" onclick="openBaseActionMenu('${base}')">Retour</button>
+        <button type="button" onclick="closeBaseActionMenu()">Annuler</button>
       </div>
     </div>
   `;
@@ -3725,9 +3777,11 @@ function closeBaseActionMenu() {
 function moveRunnerFromBase(base, destination) {
   const game = getCurrentGame();
   if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
+  if (!game) return showToast("Aucune partie active.", "warning");
+  game.bases = normalizeGameBases(game.bases);
   const fromKey = movementBaseKey(base);
   const runnerId = game?.bases[fromKey];
-  if (!game || !runnerId) return;
+  if (!runnerId) return showToast("Cette base est vide.", "info");
   const toKey = movementBaseKey(destination);
   if (toKey && game.bases[toKey]) return showToast("Cette base est déjà occupée.", "warning");
   snapshotGame(game);
@@ -3739,10 +3793,15 @@ function moveRunnerFromBase(base, destination) {
   renderAll();
 }
 
+function scoreRunnerFromBase(base) {
+  return moveRunnerFromBase(base, "home");
+}
+
 function clearBase(base) {
   const game = getCurrentGame();
   if (!game) return;
   if (!canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
+  game.bases = normalizeGameBases(game.bases);
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
   updateCurrentGame(game, { syncLive: true });
@@ -3753,7 +3812,9 @@ function clearBase(base) {
 function removeRunnerFromBase(base) {
   const game = getCurrentGame();
   if (game && !canCurrentDeviceScore(game)) return showToast("Mode lecture seule : prenez le relais pour modifier les coureurs.", "warning");
-  if (!game?.bases[movementBaseKey(base)]) return;
+  if (!game) return showToast("Aucune partie active.", "warning");
+  game.bases = normalizeGameBases(game.bases);
+  if (!game?.bases[movementBaseKey(base)]) return showToast("Cette base est vide.", "info");
   snapshotGame(game);
   game.bases[movementBaseKey(base)] = null;
   addOuts(game, 1);
@@ -3767,13 +3828,20 @@ function renderLastActionCard(game) {
   const card = $("#lastActionCard");
   if (!card) return;
   const last = game?.playByPlay?.[0];
+  const parts = last ? [
+    last.batter ? `Frappeur : ${last.batter}` : "",
+    last.result ? `Resultat : ${last.result}` : "",
+    last.runsScored ? `Points : ${last.runsScored}` : "",
+    last.defensePlay ? `Jeu defensif : ${last.defensePlay}` : ""
+  ].filter(Boolean) : [];
   card.innerHTML = `
     <p class="eyebrow">Dernière action</p>
     <strong>${escapeHtml(last?.description || "Aucune action enregistrée")}</strong>
+    ${parts.length ? `<span>${escapeHtml(parts.join(" - "))}</span>` : ""}
     ${last ? `<span>${escapeHtml([last.result, last.defensePlay, last.runsScored ? `${last.runsScored} point${last.runsScored > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · "))}</span>` : ""}
     <div class="last-action-buttons">
       <button type="button" class="warning-btn" onclick="undoLastAction()">Annuler</button>
-      <button type="button" onclick="editLastAction()">Modifier l’action</button>
+      <button type="button" onclick="editLastAction()">Modifier</button>
     </div>
   `;
 }
@@ -3802,13 +3870,14 @@ function renderMatchScreen(game = getCurrentGame()) {
 }
 
 function renderNoActiveMatchState() {
+  const games = Array.isArray(appData?.games) ? appData.games : [];
   return `
     <div class="match-state-card">
-      <h2>Aucun match en cours</h2>
-      <p>Pour marquer une partie, créez d'abord un match à partir du calendrier, puis démarrez la partie.</p>
+      <h2>Aucune partie active</h2>
+      <p>Aucune partie active. Creez ou ouvrez une partie depuis le calendrier.</p>
       <div class="form-actions">
         <button class="primary-btn" onclick="openCalendar()">Ouvrir le calendrier</button>
-        ${appData.games.some((game) => normalizeGameStatus(game.status) === "preparation") ? `<button onclick="openFirstPreparationGame()">Voir les parties en préparation</button>` : ""}
+        ${games.some((game) => normalizeGameStatus(game.status) === "preparation") ? `<button onclick="openFirstPreparationGame()">Voir les parties en préparation</button>` : ""}
       </div>
     </div>
   `;
