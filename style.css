@@ -2347,6 +2347,43 @@ textarea {
   gap: 10px;
 }
 
+.reset-settings-card,
+.reset-completion-card {
+  display: grid;
+  gap: 12px;
+}
+
+.inline-reset-section {
+  padding: 14px;
+  border: 1px solid #efc2c2;
+  border-radius: var(--radius);
+  background: #fff7f7;
+}
+
+.inline-reset-section h3,
+.inline-reset-section p,
+.reset-settings-card p,
+.reset-completion-card p {
+  margin: 0;
+}
+
+.inline-reset-section p,
+.reset-settings-card p,
+.reset-completion-card p {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.reset-data-modal {
+  width: min(640px, 100%);
+}
+
+.reset-data-modal label {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
 .marker-password-card {
   display: grid;
   gap: 12px;

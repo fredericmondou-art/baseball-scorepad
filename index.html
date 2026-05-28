@@ -43,6 +43,15 @@
           <p class="eyebrow">Public</p>
           <h2>Accueil</h2>
         </div>
+        <div id="resetCompletionCard" class="card settings-card reset-completion-card hidden">
+          <h3>RÃ©initialisation complÃ©tÃ©e</h3>
+          <p>Les donnÃ©es cloud et les donnÃ©es locales de cet appareil ont Ã©tÃ© supprimÃ©es. Les autres appareils dÃ©tecteront la rÃ©initialisation au prochain chargement.</p>
+          <div class="settings-actions">
+            <button id="resetReturnHomeBtn" type="button" class="primary-btn wide">Retour Ã  l'accueil</button>
+            <button id="resetCreateGameBtn" type="button">CrÃ©er une nouvelle partie</button>
+            <button id="resetAddPlayersBtn" type="button">Ajouter des joueurs</button>
+          </div>
+        </div>
       </div>
       <div id="homeTopGrid" class="home-dashboard-grid"></div>
       <div id="homeUpcoming" class="home-upcoming"></div>
@@ -555,6 +564,10 @@
               Importer une partie
               <input id="importGameInput" type="file" accept="application/json,.json">
             </label>
+            <div class="reset-settings-card inline-reset-section">
+              <h3>RÃ©initialisation complÃ¨te</h3>
+              <p>Cette action supprimera les donnÃ©es cloud Supabase et les donnÃ©es locales de cet appareil. Les autres appareils devront aussi vider leurs anciennes donnÃ©es locales avant de resynchroniser.</p>
+            </div>
             <button id="resetDataBtn" class="danger-btn wide">Réinitialiser toutes les données</button>
           </div>
         </div>
@@ -764,6 +777,43 @@
       <div class="modal-actions">
         <button id="loadResumeGameBtn" type="button" class="primary-btn">Charger la partie</button>
         <button id="cancelResumeGameBtn" type="button" class="secondary-btn">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="resetDataModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="resetDataTitle">
+    <div class="modal-card reset-data-modal">
+      <div id="resetStep1">
+        <div class="modal-title-row">
+          <div>
+            <p class="eyebrow">RÃ©initialisation</p>
+            <h2 id="resetDataTitle">Voulez-vous vraiment supprimer toutes les donnÃ©es de l'application?</h2>
+          </div>
+        </div>
+        <p>Cette action prÃ©pare une suppression complÃ¨te des donnÃ©es locales et cloud.</p>
+        <div class="modal-actions">
+          <button id="continueResetStep1Btn" type="button" class="danger-btn">Continuer</button>
+          <button id="cancelResetStep1Btn" type="button" class="secondary-btn">Annuler</button>
+        </div>
+      </div>
+      <div id="resetStep2" class="hidden">
+        <div class="modal-title-row">
+          <div>
+            <p class="eyebrow">Confirmation finale</p>
+            <h2>Cette action supprimera les matchs, joueurs, statistiques, play-by-play et donnÃ©es cloud.</h2>
+          </div>
+        </div>
+        <label>Tapez RESET pour confirmer
+          <input id="resetConfirmText" type="text" autocomplete="off">
+        </label>
+        <label>Code de rÃ©initialisation
+          <input id="resetCodeInput" type="password" autocomplete="off">
+        </label>
+        <p id="resetDataStatus" class="cloud-status-text"></p>
+        <div class="modal-actions">
+          <button id="confirmResetStep2Btn" type="button" class="danger-btn">RÃ©initialiser</button>
+          <button id="cancelResetStep2Btn" type="button" class="secondary-btn">Annuler</button>
+        </div>
       </div>
     </div>
   </div>

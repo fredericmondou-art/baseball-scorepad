@@ -1,10 +1,11 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-28-v1";
+const APP_VERSION_FALLBACK = "2026-05-28-v2";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
 const ADMIN_SESSION_KEY = "baseballScorepadAdminAuthenticated";
 const DEVICE_ID_STORAGE_KEY = "baseballScorepadDeviceId";
+const RESET_GENERATION_STORAGE_KEY = "baseballScorePadResetGeneration";
 const SCORER_HEARTBEAT_MS = 25000;
 const SCORER_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const SUPABASE_URL = "https://sfjtbcpsepyjpjsgdmsb.supabase.co";
@@ -77,6 +78,22 @@ let appData = {
   currentGameId: null
 };
 
+function getDefaultAppData() {
+  return {
+    team: {
+      name: "Mon Ã©quipe",
+      players: []
+    },
+    games: [],
+    calendar: [],
+    settings: {
+      markerPassword: DEFAULT_ADMIN_PASSWORD,
+      markerPasswordCloudSyncedAt: null
+    },
+    currentGameId: null
+  };
+}
+
 let pwaReady = false;
 let appVersion = APP_VERSION_FALLBACK;
 let remoteAppVersion = APP_VERSION_FALLBACK;
@@ -106,6 +123,8 @@ let scorerHeartbeatTimer = null;
 let scorerReadOnlyMode = false;
 let safeMobileMode = false;
 let markerPasswordCloudStatus = "local";
+let cloudResetChecked = false;
+let lastResetCompletion = null;
 let appDiagnostics = {
   loadTime: new Date().toISOString(),
   errors: [],
@@ -145,7 +164,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 document.addEventListener("DOMContentLoaded", initApp);
 
-function initApp() {
+async function initApp() {
   const params = new URLSearchParams(window.location.search);
   const watchId = params.get("watch");
   const resumeId = params.get("resume");
@@ -162,6 +181,7 @@ function initApp() {
   }
 
   loadData();
+  await checkCloudResetGeneration();
   if (supabaseClient) loadMarkerPasswordFromCloud({ silent: true, startup: true });
   initializePublicData();
   setupPublicNavigation();
@@ -289,7 +309,14 @@ function setupForms() {
   $("#loadCloudGamesBtn")?.addEventListener("click", loadGamesFromCloud);
   $("#syncMarkerPasswordCloudBtn")?.addEventListener("click", () => loadMarkerPasswordFromCloud());
   $("#forceAppUpdateBtn")?.addEventListener("click", forceAppUpdate);
-  $("#resetDataBtn").addEventListener("click", resetAllData);
+  $("#resetDataBtn").addEventListener("click", openResetConfirmationModal);
+  $("#cancelResetStep1Btn")?.addEventListener("click", closeResetConfirmationModal);
+  $("#continueResetStep1Btn")?.addEventListener("click", showResetConfirmationStep2);
+  $("#cancelResetStep2Btn")?.addEventListener("click", closeResetConfirmationModal);
+  $("#confirmResetStep2Btn")?.addEventListener("click", handleCompleteResetConfirm);
+  $("#resetReturnHomeBtn")?.addEventListener("click", () => showScreen("home"));
+  $("#resetCreateGameBtn")?.addEventListener("click", () => showScreen("calendar"));
+  $("#resetAddPlayersBtn")?.addEventListener("click", () => showScreen("players"));
   $("#exportDataBtn").addEventListener("click", exportData);
   $("#importDataInput").addEventListener("change", importData);
   $("#exportCurrentGameBtn")?.addEventListener("click", exportCurrentGame);
@@ -377,8 +404,10 @@ function setupSegmentedGameForm() {
 }
 
 function setupOfflineStatus() {
-  window.addEventListener("online", () => {
+  window.addEventListener("online", async () => {
     updateOfflineStatus();
+    await checkCloudResetGeneration();
+    if (!cloudResetChecked) return;
     const game = getCurrentGame();
     if (game) {
       syncPendingLiveEvents(game);
@@ -752,6 +781,12 @@ function saveData() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
 }
 
+function canUploadAfterResetCheck() {
+  if (cloudResetChecked) return true;
+  console.warn("Synchronisation bloquÃ©e : vÃ©rification reset cloud non complÃ©tÃ©e.");
+  return false;
+}
+
 function saveLocalData() {
   saveData();
 }
@@ -765,6 +800,10 @@ function saveGameEverywhere(game, options = {}) {
     cloud = true
   } = options;
   saveLocalData();
+  if (!canUploadAfterResetCheck()) {
+    updateSyncStatusUI(game);
+    return;
+  }
   if (syncLive) syncLiveGameState(game);
   if (publishPlayByPlay && playEvent) publishPlayByPlayEvent(game, playEvent);
   if (cloud) scheduleCloudSave(game);
@@ -4776,6 +4815,7 @@ function setCloudSaveState(gameId, status, pending = false, updatedAt = null) {
 
 function scheduleCloudSave(game) {
   if (!game) return;
+  if (!canUploadAfterResetCheck()) return;
   ensurePublicGameId(game);
   if (!supabaseClient || !navigator.onLine) {
     setCloudSaveState(game.id, navigator.onLine ? "pending" : "offline", true);
@@ -4791,6 +4831,7 @@ function scheduleCloudSave(game) {
 
 // Pour un usage public à grande échelle, sécuriser la reprise avec un code marqueur ou authentification.
 async function syncFullGameToCloud(game) {
+  if (!canUploadAfterResetCheck()) return { success: false, error: "reset_check_pending" };
   if (!game) return { success: false, error: "missing_game" };
   appLog(`Sauvegarde cloud demandée : ${game.publicGameId || game.id}`, "info");
   ensurePublicGameId(game);
@@ -4848,6 +4889,7 @@ function syncPendingCloudSaves() {
 }
 
 async function syncPlayersToCloud() {
+  if (!canUploadAfterResetCheck()) return { success: false, error: "reset_check_pending" };
   if (!supabaseClient || !navigator.onLine) return { success: false, error: "cloud_unavailable" };
   const now = new Date().toISOString();
   const rows = appData.team.players
@@ -5729,6 +5771,151 @@ function resetAllData() {
   showToast("Données réinitialisées.", "warning");
 }
 
+async function checkCloudResetGeneration() {
+  if (!supabaseClient || !navigator.onLine) {
+    cloudResetChecked = false;
+    return { success: false, error: "cloud_unavailable" };
+  }
+  try {
+    const { data, error } = await supabaseClient
+      .from("app_settings_cloud")
+      .select("setting_value")
+      .eq("setting_key", "data_reset")
+      .maybeSingle();
+    if (error) throw error;
+    const cloudGeneration = data?.setting_value?.generation;
+    const localGeneration = localStorage.getItem(RESET_GENERATION_STORAGE_KEY);
+    if (cloudGeneration && cloudGeneration !== localGeneration) {
+      resetLocalDataAfterCloudReset({ generation: cloudGeneration }, {
+        detected: true,
+        message: "Une rÃ©initialisation globale a Ã©tÃ© dÃ©tectÃ©e. Les anciennes donnÃ©es locales de cet appareil ont Ã©tÃ© vidÃ©es."
+      });
+    }
+    cloudResetChecked = true;
+    return { success: true, generation: cloudGeneration || localGeneration || null };
+  } catch (error) {
+    cloudResetChecked = false;
+    console.warn("Cloud reset generation check failed", error);
+    appLog(`Erreur vÃ©rification gÃ©nÃ©ration reset : ${error.message || error}`, "warning");
+    return { success: false, error };
+  }
+}
+
+function openResetConfirmationModal() {
+  const modal = $("#resetDataModal");
+  if (!modal) return;
+  $("#resetConfirmText").value = "";
+  $("#resetCodeInput").value = "";
+  $("#resetDataStatus").textContent = "";
+  $("#resetStep1").classList.remove("hidden");
+  $("#resetStep2").classList.add("hidden");
+  modal.classList.remove("hidden");
+}
+
+function closeResetConfirmationModal() {
+  $("#resetDataModal")?.classList.add("hidden");
+}
+
+function showResetConfirmationStep2() {
+  $("#resetStep1")?.classList.add("hidden");
+  $("#resetStep2")?.classList.remove("hidden");
+  $("#resetConfirmText")?.focus();
+}
+
+async function handleCompleteResetConfirm() {
+  const confirmText = String($("#resetConfirmText")?.value || "").trim();
+  const resetCode = String($("#resetCodeInput")?.value || "").trim();
+  const status = $("#resetDataStatus");
+  if (confirmText !== "RESET") {
+    if (status) status.textContent = "Tapez RESET pour confirmer.";
+    return;
+  }
+  if (!resetCode) {
+    if (status) status.textContent = "Entrez le code de rÃ©initialisation.";
+    return;
+  }
+  if (status) status.textContent = "RÃ©initialisation cloud en cours...";
+  const resetResult = await resetAllSupabaseData(resetCode);
+  if (!resetResult.success) {
+    if (status) status.textContent = resetResult.message || "Code invalide ou rÃ©initialisation impossible.";
+    showToast(status?.textContent || "RÃ©initialisation refusÃ©e.", "error");
+    return;
+  }
+  closeResetConfirmationModal();
+  resetLocalDataAfterCloudReset(resetResult);
+}
+
+async function resetAllSupabaseData(resetCode) {
+  if (!supabaseClient || !navigator.onLine) {
+    return { success: false, message: "Supabase n'est pas disponible. Les donnÃ©es locales sont conservÃ©es." };
+  }
+  try {
+    const { data, error } = await supabaseClient.rpc("reset_baseball_scorepad_data", {
+      reset_code: resetCode
+    });
+    if (error) throw error;
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.success) {
+      return {
+        success: false,
+        message: result?.message || result?.error || "Code de rÃ©initialisation invalide."
+      };
+    }
+    return {
+      ...result,
+      success: true,
+      generation: result.generation || result.reset_generation || new Date().toISOString()
+    };
+  } catch (error) {
+    console.warn("Supabase reset failed", error);
+    appLog(`Erreur reset Supabase : ${error.message || error}`, "error");
+    return { success: false, message: error.message || "RÃ©initialisation Supabase impossible." };
+  }
+}
+
+function clearBaseballScorepadLocalStorage() {
+  Object.keys(localStorage).forEach((key) => {
+    if (key === RESET_GENERATION_STORAGE_KEY) return;
+    if (key.startsWith("baseballScorepad") || key.startsWith("baseballScorePad")) {
+      localStorage.removeItem(key);
+    }
+  });
+}
+
+function resetLocalDataAfterCloudReset(resetResult = {}, options = {}) {
+  const generation = String(resetResult.generation || new Date().toISOString());
+  cloudResetChecked = true;
+  Object.values(cloudSyncTimers).forEach((timer) => clearTimeout(timer));
+  cloudSyncTimers = {};
+  clearBaseballScorepadLocalStorage();
+  localStorage.setItem(RESET_GENERATION_STORAGE_KEY, generation);
+  appData = getDefaultAppData();
+  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, DEFAULT_ADMIN_PASSWORD);
+  saveData();
+  activeStatsView = "season";
+  selectedStatsGameId = null;
+  selectedStatsPlayerId = null;
+  statsCloudPlayersRequested = false;
+  lastResetCompletion = options.detected ? null : { generation };
+  renderAll();
+  showScreen("home");
+  if (!options.detected) renderResetCompletionCard();
+  showToast(
+    options.message || "DonnÃ©es rÃ©initialisÃ©es. Vous pouvez recommencer Ã  zÃ©ro.",
+    options.detected ? "warning" : "success"
+  );
+}
+
+function renderResetCompletionCard() {
+  const card = $("#resetCompletionCard");
+  if (!card || !lastResetCompletion) return;
+  card.classList.remove("hidden");
+}
+
+function resetAllData() {
+  openResetConfirmationModal();
+}
+
 function exportData() {
   const payload = JSON.stringify(appData, null, 2);
   const blob = new Blob([payload], { type: "application/json" });
@@ -5929,6 +6116,7 @@ async function saveMarkerPassword(newPassword) {
 }
 
 async function syncMarkerPasswordToCloud(password) {
+  if (!canUploadAfterResetCheck()) return { success: false, error: "reset_check_pending" };
   if (!supabaseClient || !navigator.onLine) return { success: false, error: "cloud_unavailable" };
   const updatedAt = new Date().toISOString();
   try {
