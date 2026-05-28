@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-28-v2";
+const APP_VERSION_FALLBACK = "2026-05-28-v3";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -5772,7 +5772,7 @@ function resetAllData() {
 }
 
 async function checkCloudResetGeneration() {
-  if (!supabaseClient || !navigator.onLine) {
+  if (!supabaseClient) {
     cloudResetChecked = false;
     return { success: false, error: "cloud_unavailable" };
   }
@@ -5843,9 +5843,54 @@ async function handleCompleteResetConfirm() {
   }
   closeResetConfirmationModal();
   resetLocalDataAfterCloudReset(resetResult);
+  showToast("DonnÃ©es rÃ©initialisÃ©es avec succÃ¨s.", "success");
 }
 
 async function resetAllSupabaseData(resetCode) {
+  if (!supabaseClient) {
+    return {
+      success: false,
+      message: "Supabase n'est pas configurÃ©."
+    };
+  }
+
+  try {
+    const { data, error } = await supabaseClient.rpc("reset_baseball_scorepad_data", {
+      reset_code: resetCode
+    });
+
+    if (error) {
+      console.error("Erreur reset Supabase RPC:", error);
+      return {
+        success: false,
+        message: formatResetSupabaseError(error.message || "Erreur Supabase pendant la rÃ©initialisation.")
+      };
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.success) {
+      return {
+        ...(result || {}),
+        success: false,
+        message: formatResetSupabaseError(result?.message || result?.error || "Code de rÃ©initialisation invalide.")
+      };
+    }
+
+    return {
+      ...result,
+      success: true,
+      generation: result.generation || result.reset_generation || new Date().toISOString()
+    };
+  } catch (err) {
+    console.error("Erreur reset Supabase:", err);
+    return {
+      success: false,
+      message: formatResetSupabaseError(err.message || "Erreur inattendue pendant la rÃ©initialisation.")
+    };
+  }
+}
+
+async function resetAllSupabaseDataLegacy(resetCode) {
   if (!supabaseClient || !navigator.onLine) {
     return { success: false, message: "Supabase n'est pas disponible. Les donnÃ©es locales sont conservÃ©es." };
   }
@@ -5914,6 +5959,58 @@ function renderResetCompletionCard() {
 
 function resetAllData() {
   openResetConfirmationModal();
+}
+
+async function resetAllSupabaseDataViaRpc(resetCode) {
+  if (!supabaseClient) {
+    return {
+      success: false,
+      message: "Supabase n'est pas configurÃ©."
+    };
+  }
+
+  try {
+    const { data, error } = await supabaseClient.rpc("reset_baseball_scorepad_data", {
+      reset_code: resetCode
+    });
+
+    if (error) {
+      console.error("Erreur reset Supabase RPC:", error);
+      return {
+        success: false,
+        message: formatResetSupabaseError(error.message || "Erreur Supabase pendant la rÃ©initialisation.")
+      };
+    }
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!result?.success) {
+      return {
+        ...(result || {}),
+        success: false,
+        message: formatResetSupabaseError(result?.message || result?.error || "Code de rÃ©initialisation invalide.")
+      };
+    }
+
+    return {
+      ...result,
+      success: true,
+      generation: result.generation || result.reset_generation || new Date().toISOString()
+    };
+  } catch (err) {
+    console.error("Erreur reset Supabase:", err);
+    return {
+      success: false,
+      message: formatResetSupabaseError(err.message || "Erreur inattendue pendant la rÃ©initialisation.")
+    };
+  }
+}
+
+function formatResetSupabaseError(message) {
+  const text = String(message || "");
+  if (text.includes("DELETE requires a WHERE clause")) {
+    return "Erreur : le bouton tente une suppression directe. La rÃ©initialisation doit passer par la fonction RPC Supabase.";
+  }
+  return text;
 }
 
 function exportData() {
