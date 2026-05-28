@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-28-local-clean-v1";
+const APP_VERSION_FALLBACK = "2026-05-28-scorer-fix-v1";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -1936,7 +1936,49 @@ function openAddBatterModal(side = getBattingSide(getCurrentGame()), replace = f
 
 function closeAddBatterModal() {
   pendingAction = null;
+  addBatterState = { side: "team", replace: false };
   $("#addBatterModal").classList.add("hidden");
+}
+
+function resetScoringInteractionState(options = {}) {
+  const { closeModals = true } = options;
+  pendingAction = null;
+  pendingRunnerMovementAction = null;
+  addBatterState = { side: "team", replace: false };
+  if (closeModals) {
+    $("#addBatterModal")?.classList.add("hidden");
+    $("#runnerMovementModal")?.classList.add("hidden");
+    $("#outOptionsModal")?.classList.add("hidden");
+    $("#defensiveOutModal")?.classList.add("hidden");
+    $("#mobileMoreActionsPanel")?.classList.add("hidden");
+    $("#runnerMovementError") && ($("#runnerMovementError").textContent = "");
+  }
+}
+
+function unlockScorerInterface() {
+  resetScoringInteractionState();
+  renderLive();
+  showToast("Interface marqueur rÃ©initialisÃ©e.", "success");
+}
+
+function isModalOpen(selector) {
+  const modal = $(selector);
+  return Boolean(modal && !modal.classList.contains("hidden"));
+}
+
+function validateScoringUIState(game) {
+  if (!game || normalizeGameStatus(game.status) !== "in_progress") {
+    resetScoringInteractionState({ closeModals: false });
+    return true;
+  }
+  const stalePendingAction = pendingAction && !isModalOpen("#addBatterModal") && !isModalOpen("#defensiveOutModal");
+  const staleRunnerAction = pendingRunnerMovementAction && !isModalOpen("#runnerMovementModal");
+  if (stalePendingAction || staleRunnerAction) {
+    resetScoringInteractionState();
+    showToast("Ã‰tat de marquage rÃ©initialisÃ©.", "info");
+    return false;
+  }
+  return true;
 }
 
 function renderExistingBatterOptions() {
@@ -2635,6 +2677,7 @@ function recordAtBat(action, defensePlay = null, batterConfirmed = false, confir
   getAtBatList(game, side).push(atBat);
   advanceBatterIndex(game, side);
   updateCurrentGame(game, { syncLive: true, playEvent });
+  resetScoringInteractionState();
   renderAll();
   playGameAnimation(playEvent.animation);
   showToast(actionFeedback(action, runsScored, defensePlay), action === "error" ? "warning" : "success");
@@ -3073,6 +3116,7 @@ function confirmRunnerMovementModal() {
   const rbi = clampRbiValue($("#runnerMovementRbi").value);
   closeRunnerMovementModal();
   recordAtBat(actionType, defensePlay, true, movements, rbi);
+  resetScoringInteractionState();
 }
 
 function openEditRunnersModal() {
@@ -3161,6 +3205,7 @@ function applyManualBaseEdit() {
   game.bases = nextBases;
   updateCurrentGame(game, { syncLive: true });
   closeEditRunnersModal();
+  resetScoringInteractionState({ closeModals: false });
   renderAll();
   showToast("Coureurs mis à jour.", "success");
 }
@@ -3375,6 +3420,7 @@ function endHalfInning(shouldSnapshot) {
   game.playByPlay = game.playByPlay.slice(0, 120);
   game.liveLastAction = playEvent.description;
   updateCurrentGame(game, { syncLive: true, playEvent });
+  resetScoringInteractionState();
   renderAll();
   playGameAnimation(playEvent.animation);
   showToast("Demi-manche changée.", "info");
@@ -3458,6 +3504,7 @@ function undoLastAction() {
   const previous = game.history.pop();
   previous.history = game.history;
   updateCurrentGame(previous);
+  resetScoringInteractionState();
   renderAll();
   showToast("Dernière action annulée.", "warning");
 }
@@ -3524,6 +3571,7 @@ function renderLive() {
   game.playByPlay = Array.isArray(game.playByPlay) ? game.playByPlay : [];
   appData.team = appData.team || { name: "Mon equipe", players: [] };
   appData.team.players = Array.isArray(appData.team.players) ? appData.team.players : [];
+  validateScoringUIState(game);
 
   renderMatchScreen(game);
   game.currentBattingSide = getBattingSide(game);
@@ -3690,6 +3738,8 @@ function renderMobileSituationDetails(game) {
     return;
   }
   const side = getBattingSide(game);
+  const batter = getCurrentBatter(game);
+  const nextBatter = getNextBatter(game);
   const addedBatters = side === "team" ? (game.lineup || []).length : (game.opponentLineup || []).length;
   details.innerHTML = `
     <section class="mobile-situation-detail-card">
@@ -3704,6 +3754,23 @@ function renderMobileSituationDetails(game) {
         <div><dt>Points demi-manche</dt><dd>${getCurrentHalfInningRuns(game)}</dd></div>
         <div><dt>Statut cloud</dt><dd>${escapeHtml(cloudSaveStatusLabel(game))}</dd></div>
       </dl>
+      <div class="batter-confirm-card">
+        ${batter ? `
+          <strong>Au bÃ¢ton : ${escapeHtml(displayBatterName(batter, side, game))}</strong>
+          <span>${nextBatter ? `Prochain au bÃ¢ton : ${escapeHtml(displayBatterName(nextBatter, side, game))}` : "Prochain frappeur Ã  confirmer"}</span>
+          <div class="batter-confirm-actions">
+            <button type="button" class="small-btn" onclick="showToast('Frappeur confirmÃ©.', 'success')">Confirmer</button>
+            <button type="button" class="small-btn secondary-btn" onclick="replaceCurrentBatter()">Changer</button>
+          </div>
+        ` : `
+          <strong>Frappeur Ã  confirmer</strong>
+          <span>Veuillez confirmer le frappeur au bÃ¢ton avant la prochaine action.</span>
+          <div class="batter-confirm-actions">
+            <button type="button" class="small-btn primary-btn" onclick="openBatterConfirmModal('${side}', pendingAction?.actionType, true)">Choisir le frappeur</button>
+          </div>
+        `}
+      </div>
+      <button type="button" class="small-btn secondary-btn unlock-scorer-btn" onclick="unlockScorerInterface()">DÃ©bloquer le marqueur</button>
     </section>
   `;
 }
@@ -3766,6 +3833,7 @@ function openMoreActionsPanel() {
       <button type="button" onclick="triggerScorerAction('doubleplay')">Double jeu</button>
       <button type="button" onclick="closeMoreActionsPanel();openEditRunnersModal()">Modifier coureurs</button>
       <button type="button" onclick="closeMoreActionsPanel();endHalfInning(true)">Fin demi-manche</button>
+      <button type="button" class="secondary-btn" onclick="unlockScorerInterface()">DÃ©bloquer le marqueur</button>
     </div>
   `;
   panel.classList.remove("hidden");

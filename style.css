@@ -2431,6 +2431,31 @@ textarea {
   background: #fff7f7;
 }
 
+.batter-confirm-card {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f9fbfd;
+}
+
+.batter-confirm-card span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.batter-confirm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unlock-scorer-btn {
+  margin-top: 10px;
+}
+
 .offline-panel {
   display: grid;
   gap: 12px;
