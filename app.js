@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-28-v3";
+const APP_VERSION_FALLBACK = "2026-05-28-local-clean-v1";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -125,6 +125,7 @@ let safeMobileMode = false;
 let markerPasswordCloudStatus = "local";
 let cloudResetChecked = false;
 let lastResetCompletion = null;
+let localCleanMode = false;
 let appDiagnostics = {
   loadTime: new Date().toISOString(),
   errors: [],
@@ -168,6 +169,7 @@ async function initApp() {
   const params = new URLSearchParams(window.location.search);
   const watchId = params.get("watch");
   const resumeId = params.get("resume");
+  localCleanMode = params.has("localclean");
   if (isDebugMode()) {
     appLog("Démarrage de l'application en mode diagnostic", "info");
     document.body.classList.add("debug-mode");
@@ -180,10 +182,15 @@ async function initApp() {
     return;
   }
 
-  loadData();
-  await checkCloudResetGeneration();
-  if (supabaseClient) loadMarkerPasswordFromCloud({ silent: true, startup: true });
-  initializePublicData();
+  if (localCleanMode) {
+    await clearAllLocalDeviceData({ reload: false, silent: true });
+    cloudResetChecked = true;
+  } else {
+    loadData();
+    await checkCloudResetGeneration();
+    if (supabaseClient) loadMarkerPasswordFromCloud({ silent: true, startup: true });
+    initializePublicData();
+  }
   setupPublicNavigation();
   setupNavigation();
   setupForms();
@@ -198,7 +205,7 @@ async function initApp() {
   renderCalendarRunLimitSettings();
   renderLineupModeSettings();
   setupOfflineStatus();
-  registerServiceWorker();
+  if (!localCleanMode) registerServiceWorker();
   fillPositionSelect();
   fillQuickBatterPositionSelect();
   setDefaultGameDate();
@@ -310,6 +317,11 @@ function setupForms() {
   $("#syncMarkerPasswordCloudBtn")?.addEventListener("click", () => loadMarkerPasswordFromCloud());
   $("#forceAppUpdateBtn")?.addEventListener("click", forceAppUpdate);
   $("#resetDataBtn").addEventListener("click", openResetConfirmationModal);
+  $("#clearLocalDeviceBtn")?.addEventListener("click", openLocalDeviceCleanModal);
+  $("#cancelLocalCleanStep1Btn")?.addEventListener("click", closeLocalDeviceCleanModal);
+  $("#continueLocalCleanStep1Btn")?.addEventListener("click", showLocalDeviceCleanStep2);
+  $("#cancelLocalCleanStep2Btn")?.addEventListener("click", closeLocalDeviceCleanModal);
+  $("#confirmLocalCleanStep2Btn")?.addEventListener("click", handleLocalDeviceCleanConfirm);
   $("#cancelResetStep1Btn")?.addEventListener("click", closeResetConfirmationModal);
   $("#continueResetStep1Btn")?.addEventListener("click", showResetConfirmationStep2);
   $("#cancelResetStep2Btn")?.addEventListener("click", closeResetConfirmationModal);
@@ -5961,6 +5973,129 @@ function resetAllData() {
   openResetConfirmationModal();
 }
 
+function openLocalDeviceCleanModal() {
+  const modal = $("#localDeviceCleanModal");
+  if (!modal) return;
+  $("#localCleanConfirmText").value = "";
+  $("#localCleanStatus").textContent = "";
+  $("#localCleanStep1").classList.remove("hidden");
+  $("#localCleanStep2").classList.add("hidden");
+  modal.classList.remove("hidden");
+}
+
+function closeLocalDeviceCleanModal() {
+  $("#localDeviceCleanModal")?.classList.add("hidden");
+}
+
+function showLocalDeviceCleanStep2() {
+  $("#localCleanStep1")?.classList.add("hidden");
+  $("#localCleanStep2")?.classList.remove("hidden");
+  $("#localCleanConfirmText")?.focus();
+}
+
+async function handleLocalDeviceCleanConfirm() {
+  const confirmText = String($("#localCleanConfirmText")?.value || "").trim();
+  const status = $("#localCleanStatus");
+  if (confirmText !== "VIDER") {
+    if (status) status.textContent = "Tapez VIDER pour confirmer.";
+    return;
+  }
+  if (status) status.textContent = "Nettoyage local en cours...";
+  closeLocalDeviceCleanModal();
+  await clearAllLocalDeviceData();
+}
+
+function isBaseballScorepadStorageKey(key) {
+  const value = String(key || "").toLowerCase();
+  return [
+    "baseball",
+    "scorepad",
+    "appdata",
+    "baseballscorepad",
+    "baseball-scorepad",
+    "currentgame",
+    "resetgeneration"
+  ].some((pattern) => value.includes(pattern));
+}
+
+function isBaseballScorepadCacheName(name) {
+  const value = String(name || "").toLowerCase();
+  return ["baseball", "scorepad", "pwa", "app"].some((pattern) => value.includes(pattern));
+}
+
+function removeMatchingStorageKeys(storage) {
+  if (!storage) return;
+  const keys = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (isBaseballScorepadStorageKey(key)) keys.push(key);
+  }
+  keys.forEach((key) => storage.removeItem(key));
+}
+
+async function clearMatchingCaches() {
+  if (!("caches" in window)) return;
+  const names = await caches.keys();
+  await Promise.all(names.filter(isBaseballScorepadCacheName).map((name) => caches.delete(name)));
+}
+
+async function clearMatchingIndexedDbDatabases() {
+  if (!("indexedDB" in window)) return;
+  const knownNames = [
+    "baseballScorepad",
+    "baseball-scorepad",
+    "baseballScorepadData",
+    "scorepad"
+  ];
+  try {
+    if (typeof indexedDB.databases === "function") {
+      const databases = await indexedDB.databases();
+      databases
+        .map((database) => database.name)
+        .filter(isBaseballScorepadStorageKey)
+        .forEach((name) => indexedDB.deleteDatabase(name));
+      return;
+    }
+  } catch (error) {
+    console.warn("IndexedDB listing unavailable", error);
+  }
+  knownNames.forEach((name) => indexedDB.deleteDatabase(name));
+}
+
+async function unregisterLocalServiceWorkers() {
+  if (!("serviceWorker" in navigator)) return;
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(registrations.map((registration) => registration.unregister()));
+}
+
+async function clearAllLocalDeviceData(options = {}) {
+  const { reload = true, silent = false } = options;
+  Object.values(cloudSyncTimers).forEach((timer) => clearTimeout(timer));
+  cloudSyncTimers = {};
+  removeMatchingStorageKeys(localStorage);
+  removeMatchingStorageKeys(sessionStorage);
+  await Promise.all([
+    clearMatchingCaches(),
+    clearMatchingIndexedDbDatabases(),
+    unregisterLocalServiceWorkers()
+  ]);
+  appData = typeof getDefaultAppData === "function" ? getDefaultAppData() : {
+    team: { players: [] },
+    games: [],
+    calendar: [],
+    settings: {},
+    currentGameId: null
+  };
+  appData.currentGameId = null;
+  saveData();
+  if (!silent) showToast("DonnÃ©es locales supprimÃ©es. L'application va redÃ©marrer.", "success");
+  if (reload) {
+    setTimeout(() => {
+      window.location.href = `${window.location.pathname}?localclean=${Date.now()}`;
+    }, 500);
+  }
+}
+
 async function resetAllSupabaseDataViaRpc(resetCode) {
   if (!supabaseClient) {
     return {
@@ -6121,10 +6256,27 @@ function importGameFile(event) {
 
 function renderSettings() {
   $("#teamNameInput").value = appData.team.name;
+  ensureLocalCleanSettingsCard();
   const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || ""]).size;
   $("#storageState").textContent = `Sauvegarde active dans ce navigateur. Taille approximative : ${bytes} octets.`;
   renderMarkerPasswordCloudStatus();
   renderAppVersion({ version: appVersion || APP_VERSION_FALLBACK, updatedAt: "" });
+}
+
+function ensureLocalCleanSettingsCard() {
+  if ($("#settingsLocalCleanCard")) return;
+  const settingsGrid = $("#screen-settings .two-column");
+  if (!settingsGrid) return;
+  const card = document.createElement("div");
+  card.id = "settingsLocalCleanCard";
+  card.className = "card settings-card local-clean-card";
+  card.innerHTML = `
+    <h3>Nettoyage local</h3>
+    <p>Cette action efface les donnÃ©es locales de cet appareil seulement. Elle ne supprime rien dans Supabase.</p>
+    <button id="clearLocalDeviceBtn" type="button" class="danger-btn wide">Vider cet appareil</button>
+  `;
+  settingsGrid.appendChild(card);
+  $("#clearLocalDeviceBtn")?.addEventListener("click", openLocalDeviceCleanModal);
 }
 
 function renderMarkerPasswordCloudStatus() {

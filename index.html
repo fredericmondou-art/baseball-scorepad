@@ -50,6 +50,16 @@
             <button id="resetReturnHomeBtn" type="button" class="primary-btn wide">Retour Ã  l'accueil</button>
             <button id="resetCreateGameBtn" type="button">CrÃ©er une nouvelle partie</button>
             <button id="resetAddPlayersBtn" type="button">Ajouter des joueurs</button>
+            <div class="local-clean-card inline-reset-section">
+              <h3>Nettoyage local</h3>
+              <p>Cette action efface les donnÃ©es locales de cet appareil seulement. Elle ne supprime rien dans Supabase.</p>
+            </div>
+            <button id="clearLocalDeviceBtnHome" type="button" class="danger-btn wide">Vider cet appareil</button>
+            <div class="local-clean-card inline-reset-section">
+              <h3>Nettoyage local</h3>
+              <p>Cette action efface les donnÃ©es locales de cet appareil seulement. Elle ne supprime rien dans Supabase.</p>
+            </div>
+            <button id="clearLocalDeviceBtnHome2" type="button" class="danger-btn wide">Vider cet appareil</button>
           </div>
         </div>
       </div>
@@ -116,6 +126,11 @@
             <span id="playersCount" class="pill">0 joueur</span>
           </div>
           <div id="playersList" class="list roster-list"></div>
+        </div>
+        <div class="card settings-card local-clean-card">
+          <h3>Nettoyage local</h3>
+          <p>Cette action efface les donnÃ©es locales de cet appareil seulement. Elle ne supprime rien dans Supabase.</p>
+          <button id="clearLocalDeviceBtnPlayers" type="button" class="danger-btn wide">Vider cet appareil</button>
         </div>
       </div>
     </section>
@@ -813,6 +828,40 @@
         <div class="modal-actions">
           <button id="confirmResetStep2Btn" type="button" class="danger-btn">RÃ©initialiser</button>
           <button id="cancelResetStep2Btn" type="button" class="secondary-btn">Annuler</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="localDeviceCleanModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="localDeviceCleanTitle">
+    <div class="modal-card reset-data-modal">
+      <div id="localCleanStep1">
+        <div class="modal-title-row">
+          <div>
+            <p class="eyebrow">Nettoyage local</p>
+            <h2 id="localDeviceCleanTitle">Voulez-vous vraiment vider toutes les donnÃ©es locales de cet appareil?</h2>
+          </div>
+        </div>
+        <p>Cette action ne supprime rien dans Supabase.</p>
+        <div class="modal-actions">
+          <button id="continueLocalCleanStep1Btn" type="button" class="danger-btn">Continuer</button>
+          <button id="cancelLocalCleanStep1Btn" type="button" class="secondary-btn">Annuler</button>
+        </div>
+      </div>
+      <div id="localCleanStep2" class="hidden">
+        <div class="modal-title-row">
+          <div>
+            <p class="eyebrow">Confirmation</p>
+            <h2>Tapez VIDER pour confirmer le nettoyage local.</h2>
+          </div>
+        </div>
+        <label>Confirmation
+          <input id="localCleanConfirmText" type="text" autocomplete="off">
+        </label>
+        <p id="localCleanStatus" class="cloud-status-text"></p>
+        <div class="modal-actions">
+          <button id="confirmLocalCleanStep2Btn" type="button" class="danger-btn">Vider cet appareil</button>
+          <button id="cancelLocalCleanStep2Btn" type="button" class="secondary-btn">Annuler</button>
         </div>
       </div>
     </div>

@@ -2348,9 +2348,14 @@ textarea {
 }
 
 .reset-settings-card,
-.reset-completion-card {
+.reset-completion-card,
+.local-clean-card {
   display: grid;
   gap: 12px;
+}
+
+.screen:not(#screen-settings) .local-clean-card {
+  display: none;
 }
 
 .inline-reset-section {
