@@ -518,6 +518,17 @@
           </label>
           <button type="submit" class="primary-btn">Sauvegarder</button>
         </form>
+        <div class="card settings-card marker-password-card">
+          <h3>Mot de passe marqueur</h3>
+          <form id="settingsMarkerPasswordForm" class="inline-admin-form">
+            <label>Nouveau mot de passe
+              <input id="settingsMarkerPasswordInput" type="password" autocomplete="new-password">
+            </label>
+            <button type="submit">Modifier le mot de passe</button>
+          </form>
+          <div id="markerPasswordCloudStatus" class="password-sync-status"></div>
+          <button id="syncMarkerPasswordCloudBtn" type="button" class="primary-btn wide">Synchroniser mot de passe depuis le cloud</button>
+        </div>
         <div class="card settings-card">
           <h3>Sauvegarde locale</h3>
           <p id="storageState" class="storage-state"></p>

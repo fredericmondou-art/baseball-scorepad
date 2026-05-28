@@ -1,4 +1,4 @@
-const APP_VERSION = "2026-05-25-v3";
+const APP_VERSION = "2026-05-28-v1";
 const CACHE_NAME = `baseball-scorepad-${APP_VERSION}`;
 
 const APP_SHELL = [

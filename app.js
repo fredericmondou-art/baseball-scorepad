@@ -1,5 +1,5 @@
 const STORAGE_KEY = "baseballScorepadData";
-const APP_VERSION_FALLBACK = "2026-05-25-v3";
+const APP_VERSION_FALLBACK = "2026-05-28-v1";
 const APP_VERSION_STORAGE_KEY = "baseballScorepadAppVersion";
 const DEFAULT_ADMIN_PASSWORD = "changer-moi";
 const ADMIN_PASSWORD_STORAGE_KEY = "baseballScorepadAdminPassword";
@@ -70,6 +70,10 @@ let appData = {
   },
   games: [],
   calendar: [],
+  settings: {
+    markerPassword: DEFAULT_ADMIN_PASSWORD,
+    markerPasswordCloudSyncedAt: null
+  },
   currentGameId: null
 };
 
@@ -101,6 +105,7 @@ let cloudSyncTimers = {};
 let scorerHeartbeatTimer = null;
 let scorerReadOnlyMode = false;
 let safeMobileMode = false;
+let markerPasswordCloudStatus = "local";
 let appDiagnostics = {
   loadTime: new Date().toISOString(),
   errors: [],
@@ -157,6 +162,7 @@ function initApp() {
   }
 
   loadData();
+  if (supabaseClient) loadMarkerPasswordFromCloud({ silent: true, startup: true });
   initializePublicData();
   setupPublicNavigation();
   setupNavigation();
@@ -266,6 +272,7 @@ function setupForms() {
   $("#gameForm").addEventListener("submit", createGame);
   $("#opponentBatterForm").addEventListener("submit", addOpponentBatter);
   $("#settingsForm").addEventListener("submit", saveSettings);
+  $("#settingsMarkerPasswordForm")?.addEventListener("submit", updateSettingsMarkerPassword);
   $("#startGameBtn").addEventListener("click", startCurrentGame);
   $("#undoBtn").addEventListener("click", undoLastAction);
   $("#endHalfBtn").addEventListener("click", () => endHalfInning(true));
@@ -280,6 +287,7 @@ function setupForms() {
   $("#oppMinusBtn").addEventListener("click", () => adjustOpponentScore(-1));
   $("#printBtn").addEventListener("click", () => window.print());
   $("#loadCloudGamesBtn")?.addEventListener("click", loadGamesFromCloud);
+  $("#syncMarkerPasswordCloudBtn")?.addEventListener("click", () => loadMarkerPasswordFromCloud());
   $("#forceAppUpdateBtn")?.addEventListener("click", forceAppUpdate);
   $("#resetDataBtn").addEventListener("click", resetAllData);
   $("#exportDataBtn").addEventListener("click", exportData);
@@ -783,6 +791,10 @@ function loadData() {
         },
         games: Array.isArray(parsed.games) ? parsed.games : [],
         calendar: Array.isArray(parsed.calendar) ? parsed.calendar : [],
+        settings: {
+          markerPassword: parsed.settings?.markerPassword || localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD,
+          markerPasswordCloudSyncedAt: parsed.settings?.markerPasswordCloudSyncedAt || null
+        },
         currentGameId: parsed.currentGameId || null
       };
     } catch (error) {
@@ -797,6 +809,10 @@ function loadData() {
 
 function migrateData() {
   if (!Array.isArray(appData.calendar)) appData.calendar = [];
+  if (!appData.settings || typeof appData.settings !== "object") appData.settings = {};
+  appData.settings.markerPassword = appData.settings.markerPassword || localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD;
+  appData.settings.markerPasswordCloudSyncedAt = appData.settings.markerPasswordCloudSyncedAt || null;
+  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, appData.settings.markerPassword);
   appData.team.players = appData.team.players.map((player) => ({
     id: player.id || createId("player"),
     number: player.number || "",
@@ -4911,9 +4927,16 @@ async function syncAllCloudData() {
     await syncPlayersToCloud();
     await loadPlayersFromCloud();
     await loadGamesFromCloud({ silent: true });
+    const markerPasswordResult = await loadMarkerPasswordFromCloud({ silent: true });
     rebuildMissingPlayersFromGameSnapshots();
+    calculateSeasonStats();
     renderAll();
-    showToast("Joueurs, matchs et statistiques synchronises.", "success");
+    showToast(
+      markerPasswordResult.success
+        ? "Joueurs, matchs, mot de passe et statistiques synchronises."
+        : "Joueurs, matchs et statistiques synchronises. Mot de passe cloud indisponible.",
+      markerPasswordResult.success ? "success" : "warning"
+    );
   } catch (error) {
     console.warn("Full cloud data sync failed", error);
     showToast("Erreur de synchronisation. Certaines donnees locales peuvent etre incompletes.", "error");
@@ -5693,8 +5716,13 @@ function resetAllData() {
     team: { name: "Mon équipe", players: [] },
     games: [],
     calendar: [],
+    settings: {
+      markerPassword: DEFAULT_ADMIN_PASSWORD,
+      markerPasswordCloudSyncedAt: null
+    },
     currentGameId: null
   };
+  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, DEFAULT_ADMIN_PASSWORD);
   saveData();
   renderAll();
   showScreen("home");
@@ -5732,6 +5760,10 @@ function importData(event) {
         },
         games: imported.games,
         calendar: Array.isArray(imported.calendar) ? imported.calendar : [],
+        settings: {
+          markerPassword: imported.settings?.markerPassword || localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD,
+          markerPasswordCloudSyncedAt: imported.settings?.markerPasswordCloudSyncedAt || null
+        },
         currentGameId: imported.currentGameId || null
       };
       migrateData();
@@ -5807,13 +5839,34 @@ function renderSettings() {
   $("#teamNameInput").value = appData.team.name;
   const bytes = new Blob([localStorage.getItem(STORAGE_KEY) || ""]).size;
   $("#storageState").textContent = `Sauvegarde active dans ce navigateur. Taille approximative : ${bytes} octets.`;
+  renderMarkerPasswordCloudStatus();
   renderAppVersion({ version: appVersion || APP_VERSION_FALLBACK, updatedAt: "" });
+}
+
+function renderMarkerPasswordCloudStatus() {
+  const status = $("#markerPasswordCloudStatus");
+  if (!status) return;
+  const syncedAt = appData.settings?.markerPasswordCloudSyncedAt;
+  const syncTime = syncedAt
+    ? new Date(syncedAt).toLocaleTimeString("fr-CA", { hour: "2-digit", minute: "2-digit" })
+    : "--:--";
+  const labels = {
+    local: "Mot de passe local",
+    synced: "Mot de passe cloud synchronisé",
+    error: "Erreur de synchronisation"
+  };
+  status.innerHTML = `
+    <div><span>Statut</span><strong>${labels[markerPasswordCloudStatus] || labels.local}</strong></div>
+    <div><span>Dernière synchronisation</span><strong>${syncTime}</strong></div>
+  `;
+  status.classList.toggle("sync-error", markerPasswordCloudStatus === "error");
+  status.classList.toggle("sync-ok", markerPasswordCloudStatus === "synced");
 }
 
 // Sécurité MVP : ce mot de passe protège l'interface dans un site statique GitHub Pages,
 // mais ce n'est pas une authentification forte. Pour une vraie sécurité, migrer vers Supabase Auth ou une Edge Function.
 function getAdminPassword() {
-  return localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD;
+  return appData.settings?.markerPassword || localStorage.getItem(ADMIN_PASSWORD_STORAGE_KEY) || DEFAULT_ADMIN_PASSWORD;
 }
 
 function checkAdminPassword(password) {
@@ -5849,14 +5902,119 @@ function handleAdminLogin(event) {
   showToast("Admin déverrouillé.", "success");
 }
 
-function updateAdminPassword(event) {
+async function saveMarkerPassword(newPassword) {
+  const password = String(newPassword || "").trim();
+  if (!password) {
+    showToast("Le mot de passe ne peut pas etre vide.", "warning");
+    return { success: false, error: "empty_password" };
+  }
+  if (!appData.settings || typeof appData.settings !== "object") appData.settings = {};
+  appData.settings.markerPassword = password;
+  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, password);
+  saveData();
+  markerPasswordCloudStatus = "local";
+  const cloudResult = await syncMarkerPasswordToCloud(password);
+  if (cloudResult.success) {
+    appData.settings.markerPasswordCloudSyncedAt = cloudResult.syncedAt;
+    markerPasswordCloudStatus = "synced";
+    saveData();
+    renderMarkerPasswordCloudStatus();
+    showToast("Mot de passe synchronisé dans le cloud.", "success");
+  } else {
+    markerPasswordCloudStatus = "error";
+    renderMarkerPasswordCloudStatus();
+    showToast("Mot de passe sauvegardé localement. Synchronisation cloud impossible.", "warning");
+  }
+  return cloudResult;
+}
+
+async function syncMarkerPasswordToCloud(password) {
+  if (!supabaseClient || !navigator.onLine) return { success: false, error: "cloud_unavailable" };
+  const updatedAt = new Date().toISOString();
+  try {
+    // TODO : remplacer le stockage en clair par un hash sécurisé.
+    const { error } = await supabaseClient
+      .from("app_settings_cloud")
+      .upsert({
+        setting_key: "marker_password",
+        setting_value: {
+          password,
+          updatedAt
+        },
+        updated_at: updatedAt
+      }, {
+        onConflict: "setting_key"
+      });
+    if (error) throw error;
+    return { success: true, syncedAt: updatedAt };
+  } catch (error) {
+    console.warn("Marker password cloud sync failed", error);
+    appLog(`Erreur synchronisation mot de passe cloud : ${error.message || error}`, "error");
+    return { success: false, error };
+  }
+}
+
+async function loadMarkerPasswordFromCloud(options = {}) {
+  if (!supabaseClient || !navigator.onLine) {
+    markerPasswordCloudStatus = options.startup ? markerPasswordCloudStatus : "error";
+    if (!options.silent) showToast("Supabase n'est pas disponible. Mot de passe local conservé.", "warning");
+    renderMarkerPasswordCloudStatus();
+    return { success: false, error: "cloud_unavailable" };
+  }
+  try {
+    const { data, error } = await supabaseClient
+      .from("app_settings_cloud")
+      .select("setting_value, updated_at")
+      .eq("setting_key", "marker_password")
+      .maybeSingle();
+    if (error) throw error;
+    const password = data?.setting_value?.password;
+    if (!password) {
+      markerPasswordCloudStatus = "local";
+      renderMarkerPasswordCloudStatus();
+      if (!options.silent) showToast("Aucun mot de passe cloud trouvé.", "info");
+      return { success: false, error: "missing_password" };
+    }
+    if (!appData.settings || typeof appData.settings !== "object") appData.settings = {};
+    appData.settings.markerPassword = String(password);
+    appData.settings.markerPasswordCloudSyncedAt = data.updated_at || data.setting_value.updatedAt || new Date().toISOString();
+    localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, appData.settings.markerPassword);
+    saveData();
+    markerPasswordCloudStatus = "synced";
+    renderSettings();
+    if (!options.silent) showToast("Mot de passe chargé depuis le cloud.", "success");
+    return { success: true, syncedAt: appData.settings.markerPasswordCloudSyncedAt };
+  } catch (error) {
+    console.warn("Marker password cloud load failed", error);
+    appLog(`Erreur chargement mot de passe cloud : ${error.message || error}`, "error");
+    markerPasswordCloudStatus = options.startup ? markerPasswordCloudStatus : "error";
+    renderMarkerPasswordCloudStatus();
+    if (!options.silent) showToast("Erreur de synchronisation. Mot de passe local conservé.", "error");
+    return { success: false, error };
+  }
+}
+
+function hashPassword(password) {
+  // TODO : remplacer le stockage en clair par un hash sécurisé.
+  return String(password || "");
+}
+
+async function updateAdminPassword(event) {
   event?.preventDefault();
   const input = $("#newAdminPasswordInput");
   const value = input?.value.trim();
   if (!value || value.length < 4) return showToast("Entrez un mot de passe d'au moins 4 caractères.", "warning");
-  localStorage.setItem(ADMIN_PASSWORD_STORAGE_KEY, value);
+  await saveMarkerPassword(value);
   input.value = "";
-  showToast("Mot de passe Admin mis à jour.", "success");
+}
+
+async function updateSettingsMarkerPassword(event) {
+  event?.preventDefault();
+  const input = $("#settingsMarkerPasswordInput");
+  const value = input?.value.trim();
+  if (!value || value.length < 4) return showToast("Entrez un mot de passe d'au moins 4 caractères.", "warning");
+  await saveMarkerPassword(value);
+  input.value = "";
 }
 
 function renderAdminScreen() {
@@ -5926,7 +6084,7 @@ function renderAdminDashboard() {
         </div>
       </article>
       <article class="home-card dashboard-card">
-        <h3>Mot de passe Admin</h3>
+        <h3>Mot de passe marqueur</h3>
         <form onsubmit="updateAdminPassword(event)" class="inline-admin-form">
           <label>Nouveau mot de passe
             <input id="newAdminPasswordInput" type="password" autocomplete="new-password">

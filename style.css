@@ -2347,6 +2347,48 @@ textarea {
   gap: 10px;
 }
 
+.marker-password-card {
+  display: grid;
+  gap: 12px;
+}
+
+.password-sync-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.password-sync-status div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.password-sync-status span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.password-sync-status strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.password-sync-status.sync-ok div {
+  border-color: #b8dcc7;
+  background: #f3fbf6;
+}
+
+.password-sync-status.sync-error div {
+  border-color: #efc2c2;
+  background: #fff7f7;
+}
+
 .offline-panel {
   display: grid;
   gap: 12px;
@@ -3580,6 +3622,7 @@ textarea {
   .management-grid,
   .report-grid,
   .offline-status-grid,
+  .password-sync-status,
   .inline-form,
   .run-limit-toggle {
     grid-template-columns: 1fr;
